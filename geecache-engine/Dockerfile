@@ -6,7 +6,7 @@ ENV GOPROXY=https://goproxy.cn,direct
 # 拷贝当前目录下所有代码
 COPY . . 
 # 编译成名为 geecache-server 的二进制文件
-RUN go build -o geecache-server main.go
+RUN go build -o geecache-server ./cmd/simplecache
 
 # 2. 运行环境
 FROM alpine:latest

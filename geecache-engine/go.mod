@@ -1,11 +1,10 @@
-module main
+module github.com/X1Kun/simpleCache/geecache-engine
 
 go 1.24.4
 
-require (
-	geecache v0.0.0
-	github.com/prometheus/client_golang v1.23.2
-)
+require github.com/prometheus/client_golang v1.23.2
+
+require github.com/kr/text v0.2.0 // indirect
 
 require (
 	github.com/beorn7/perks v1.0.1 // indirect
@@ -16,7 +15,5 @@ require (
 	github.com/prometheus/procfs v0.16.1 // indirect
 	go.yaml.in/yaml/v2 v2.4.2 // indirect
 	golang.org/x/sys v0.35.0 // indirect
-	google.golang.org/protobuf v1.36.10 // indirect
+	google.golang.org/protobuf v1.36.10
 )
-
-replace geecache => ./geecache

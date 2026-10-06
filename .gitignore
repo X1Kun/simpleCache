@@ -1,4 +1,3 @@
-cat <<EOF > .gitignore
 # 忽略特定的二进制文件
 geecache_server.exe
 *.exe
@@ -12,4 +11,11 @@ bin/
 .DS_Store
 .idea/
 .vscode/
-EOF
+geecache_server
+geecache-server
+/geecache-engine/server
+
+/PLAN.md
+/docs/REFACTOR_STATE.md
+/docs/VALIDATION.md
+/docs/legacy/

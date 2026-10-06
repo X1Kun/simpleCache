@@ -1,8 +1,9 @@
 package demo
 
 import (
+	"context"
 	"errors"
-	geecache "github.com/X1Kun/simpleCache/geecache-engine/internal/cache"
+	"github.com/X1Kun/simpleCache/geecache-engine/internal/cache"
 	"testing"
 )
 
@@ -14,21 +15,21 @@ func TestFiniteSourceAndBloomAgree(t *testing.T) {
 	}
 	// Walk the finite source directly, then sample the actual cache path.
 	for _, key := range keys {
-		if _, err := source.Get(key); err != nil {
+		if _, err := source.Get(context.Background(), key); err != nil {
 			t.Fatalf("enumerated key %q is missing: %v", key, err)
 		}
 	}
-	group := geecache.NewGroupWithOptions(t.Name(), 1<<20, source, geecache.GroupOptions{KnownKeys: keys})
+	group := cache.NewGroup(t.Name(), 1<<20, source, cache.Options{KnownKeys: keys})
 	for key, want := range map[string]string{"Tom": "630", "Auto-0": "Value-for-Auto-0", "Auto-9999": "Value-for-Auto-9999"} {
 		for i := 0; i < 2; i++ {
-			value, err := group.Get(key)
+			value, err := group.Get(context.Background(), key)
 			if err != nil || value.String() != want {
 				t.Fatalf("%s: value=%q error=%v", key, value.String(), err)
 			}
 		}
 	}
 	for _, key := range []string{"Auto-10000", "missing", "Auto--1"} {
-		if _, err := group.Get(key); !errors.Is(err, geecache.ErrNotFound) {
+		if _, err := group.Get(context.Background(), key); !errors.Is(err, cache.ErrNotFound) {
 			t.Fatalf("%q must be missing, got %v", key, err)
 		}
 	}

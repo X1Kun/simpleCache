@@ -2,8 +2,9 @@
 package demo
 
 import (
+	"context"
 	"fmt"
-	geecache "github.com/X1Kun/simpleCache/geecache-engine/internal/cache"
+	"github.com/X1Kun/simpleCache/geecache-engine/internal/cache"
 	"sort"
 	"time"
 )
@@ -36,11 +37,17 @@ func (s *Source) Keys() []string {
 	return keys
 }
 
-func (s *Source) Get(key string) ([]byte, error) {
-	time.Sleep(s.delay)
+func (s *Source) Get(ctx context.Context, key string) ([]byte, error) {
+	timer := time.NewTimer(s.delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-timer.C:
+	}
 	value, ok := s.values[key]
 	if !ok {
-		return nil, fmt.Errorf("%w: %s", geecache.ErrNotFound, key)
+		return nil, fmt.Errorf("%w: %s", cache.ErrNotFound, key)
 	}
 	return []byte(value), nil
 }

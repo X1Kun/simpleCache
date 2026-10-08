@@ -6,15 +6,15 @@ import (
 	"strconv"
 )
 
-// 给哈希函数起一个方便理解的名字
+// Hash maps bytes to a ring position.
 type Hash func(data []byte) uint32
 
-// Map相当于一个环
+// Map implements a consistent hash ring.
 type Map struct {
-	hash     Hash           // 将每一个虚拟桶映射在环上
-	replicas int            // 每个物理桶的虚拟桶个数
-	keys     []int          // 存储虚拟桶的哈希值
-	hashMap  map[int]string // 虚拟桶哈希值映射回物理桶：n*replicas -> n
+	hash     Hash           // Hash function for virtual nodes and keys.
+	replicas int            // Virtual nodes per physical node.
+	keys     []int          // Sorted virtual-node positions.
+	hashMap  map[int]string // Ring position to physical-node mapping.
 }
 
 func New(replicas int, fn Hash) *Map {
@@ -29,31 +29,31 @@ func New(replicas int, fn Hash) *Map {
 	return m
 }
 
-// 为环添加节点，一个物理桶会引入replicas个虚拟桶 1.为每个虚拟桶计算哈希值，并存储在切片中 2.通过map将虚拟桶映射回物理桶 3、切片排序
+// Add creates virtual nodes, records their owners, and sorts their positions.
 func (m *Map) Add(keys ...string) {
 	for _, key := range keys {
 		for i := 0; i < m.replicas; i++ {
-			// 变成：0key, 1key, 2key,并计算得到哈希值
+			// Hash each replica index followed by the node key.
 			hash := int(m.hash([]byte(strconv.Itoa(i) + key)))
-			// 将虚拟桶哈希值存在keys中，也就是刻在环上
+			// Append the virtual-node position.
 			m.keys = append(m.keys, hash)
-			// 通过虚拟桶哈希值,映射回物理桶
+			// Associate the virtual-node position with its physical owner.
 			m.hashMap[hash] = key
 		}
 	}
 	sort.Ints(m.keys)
 }
 
-// 获得数据应存储的物理桶位置 1.计算数据标签的哈希值 2.返回第一个大于此哈希值的虚拟桶 3.虚拟桶映射回物理桶并返回
+// Get finds the first ring position at or after the key hash and returns its owner.
 func (m *Map) Get(key string) string {
 	if len(m.keys) == 0 {
 		return ""
 	}
 	hash := int(m.hash([]byte(key)))
-	// 返回第一个大于数据标签哈希值的虚拟桶index，如果无法找到，则返回n（这时候环就派上了用场）
+	// Find the clockwise successor; modulo wraps past the final position.
 	idx := sort.Search(len(m.keys), func(i int) bool {
 		return m.keys[i] >= hash
 	})
-	// 通过index定位，得到虚拟桶的哈希值，映射回物理桶
-	return m.hashMap[m.keys[idx%len(m.keys)]] // 大于keys最大值的数据和小于keys最小值的数据，都将分配在keys最小值的那个桶里
+	// Resolve the selected virtual position to a physical owner.
+	return m.hashMap[m.keys[idx%len(m.keys)]] // Keys beyond the final position wrap to the first node.
 }

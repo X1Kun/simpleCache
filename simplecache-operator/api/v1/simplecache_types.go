@@ -34,10 +34,10 @@ type SimpleCacheSpec struct {
 	// +optional
 	Foo *string `json:"foo,omitempty"`
 
-	// Size 定义期望的缓存节点数量
+	// Size is the desired number of cache nodes.
 	// +kubebuilder:validation:Minimum=1
 	Size int32 `json:"size"`
-	// Image 定义拉起缓存节点所使用的 Docker 镜像 (比如: "x1kun/geecache:v1")
+	// Image is the cache container image, for example x1kun/geecache:v1.
 	Image string `json:"image"`
 }
 

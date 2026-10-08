@@ -1,135 +1,45 @@
-# simplecache-operator
-// TODO(user): Add simple overview of use/purpose
+# SimpleCache Operator
 
-## Description
-// TODO(user): An in-depth paragraph about your project and overview of use
+A Kubebuilder controller for the namespaced cache.x1kun.com/v1 SimpleCache API.
 
-## Getting Started
+## Active behavior
 
-### Prerequisites
-- go version v1.24.6+
-- docker version 17.03+.
-- kubectl version v1.11.3+.
-- Access to a Kubernetes v1.11.3+ cluster.
+The controller creates a governing headless Service and StatefulSet. It derives stable Pod DNS peer URLs from spec.size and injects the resulting PEERS environment variable. Changes to size, image, or the peer list update the StatefulSet.
 
-### To Deploy on the cluster
-**Build and push your image to the location specified by `IMG`:**
+The CR currently exposes size and image, plus an unused scaffold foo field. Status conditions exist in the schema but are not yet populated by reconciliation.
 
-```sh
-make docker-build docker-push IMG=<some-registry>/simplecache-operator:tag
+## Layout
+
+- api/v1: API types and generated DeepCopy code.
+- cmd: controller-runtime Manager entry point.
+- internal/controller: reconciliation and envtest.
+- config/crd and config/rbac: generated manifests.
+- config/samples: a valid example resource.
+- test/e2e: upstream Manager/metrics scaffold tests.
+
+Repository workflows are in ../.github/workflows. This directory no longer has standalone workflow copies.
+
+## Development
+
+Use Go 1.25.3 or a compatible newer toolchain.
+
+```bash
+make manifests generate
+make test
+make test-ci
+make lint-fix
 ```
 
-**NOTE:** This image ought to be published in the personal registry you specified.
-And it is required to have access to pull the image from the working environment.
-Make sure you have the proper permission to the registry if the above commands don’t work.
+test and test-ci download API-server/etcd assets and use envtest. They do not deploy a workload to your existing cluster. The CI variant adds race detection, an uncached run, a timeout, and coverage output.
 
-**Install the CRDs into the cluster:**
+The root Makefile also provides make generated-check and make k8s-render for consistency and rendering without deployment.
 
-```sh
-make install
-```
+## Deployment status
 
-**Deploy the Manager to the cluster with the image specified by `IMG`:**
+A sample CR is provided at config/samples/cache_v1_simplecache.yaml. It uses a local simplecache:dev image; that image must exist in the selected cluster before a deployment can start.
 
-```sh
-make deploy IMG=<some-registry>/simplecache-operator:tag
-```
+The active baseline is not a complete deployment contract: Service/StatefulSet permissions, child-resource watches, cache probes, status reconciliation, and dynamic membership need the planned Operator work. Envtest uses its own administrative client and does not validate those deployment permissions.
 
-> **NOTE**: If you encounter RBAC errors, you may need to grant yourself cluster-admin
-privileges or be logged in as admin.
+The inherited test-e2e target creates an isolated Kind cluster and tests the Manager scaffold. It is not enabled in the new CI and does not establish cache-cluster correctness.
 
-**Create instances of your solution**
-You can apply the samples (examples) from the config/sample:
-
-```sh
-kubectl apply -k config/samples/
-```
-
->**NOTE**: Ensure that the samples has default values to test it out.
-
-### To Uninstall
-**Delete the instances (CRs) from the cluster:**
-
-```sh
-kubectl delete -k config/samples/
-```
-
-**Delete the APIs(CRDs) from the cluster:**
-
-```sh
-make uninstall
-```
-
-**UnDeploy the controller from the cluster:**
-
-```sh
-make undeploy
-```
-
-## Project Distribution
-
-Following the options to release and provide this solution to the users.
-
-### By providing a bundle with all YAML files
-
-1. Build the installer for the image built and published in the registry:
-
-```sh
-make build-installer IMG=<some-registry>/simplecache-operator:tag
-```
-
-**NOTE:** The makefile target mentioned above generates an 'install.yaml'
-file in the dist directory. This file contains all the resources built
-with Kustomize, which are necessary to install this project without its
-dependencies.
-
-2. Using the installer
-
-Users can just run 'kubectl apply -f <URL for YAML BUNDLE>' to install
-the project, i.e.:
-
-```sh
-kubectl apply -f https://raw.githubusercontent.com/<org>/simplecache-operator/<tag or branch>/dist/install.yaml
-```
-
-### By providing a Helm Chart
-
-1. Build the chart using the optional helm plugin
-
-```sh
-kubebuilder edit --plugins=helm/v2-alpha
-```
-
-2. See that a chart was generated under 'dist/chart', and users
-can obtain this solution from there.
-
-**NOTE:** If you change the project, you need to update the Helm Chart
-using the same command above to sync the latest changes. Furthermore,
-if you create webhooks, you need to use the above command with
-the '--force' flag and manually ensure that any custom configuration
-previously added to 'dist/chart/values.yaml' or 'dist/chart/manager/manager.yaml'
-is manually re-applied afterwards.
-
-## Contributing
-// TODO(user): Add detailed information on how you would like others to contribute to this project
-
-**NOTE:** Run `make help` for more information on all potential `make` targets
-
-More information can be found via the [Kubebuilder Documentation](https://book.kubebuilder.io/introduction.html)
-
-## License
-
-Copyright 2026.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-
+Generated CRD/RBAC/DeepCopy files must be regenerated from source. Preserve Kubebuilder scaffold markers and PROJECT metadata.

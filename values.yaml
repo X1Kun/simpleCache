@@ -9,7 +9,7 @@ data:
       scrape_interval: 5s
     scrape_configs:
       - job_name: 'geecache'
-        # 🔥 极其暴力的静态抓取：直接锁定你的 5 个 Pod！
+        # Legacy static targets for a five-Pod demo cluster.
         static_configs:
           - targets:
             - 'my-first-geecache-0.my-first-geecache-svc.default.svc.cluster.local:9999'

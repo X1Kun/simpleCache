@@ -1,26 +1,26 @@
 package cache
 
-// 结构体包装[]byte
+// ByteView wraps an immutable cached byte slice.
 type ByteView struct {
 	b []byte
 }
 
-// 实现了Value的Len()接口
+// Len implements the LRU Value interface.
 func (bv ByteView) Len() int {
 	return len(bv.b)
 }
 
-// 返回一个新建的切片
+// ByteSlice returns a copy.
 func (bv ByteView) ByteSlice() []byte {
 	return cloneBytes(bv.b)
 }
 
-// []byte转化为string
+// String returns the cached bytes as a string.
 func (bv ByteView) String() string {
 	return string(bv.b)
 }
 
-// 深拷贝切片
+// cloneBytes copies the input slice.
 func cloneBytes(input []byte) []byte {
 	output := make([]byte, len(input))
 	copy(output, input)

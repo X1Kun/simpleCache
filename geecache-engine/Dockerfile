@@ -1,17 +1,18 @@
-# 1. 编译代码
+# Build the cache binary.
 FROM golang:1.24-alpine AS builder
 WORKDIR /app
-# # 配置国内环境
-ENV GOPROXY=https://goproxy.cn,direct
-# 拷贝当前目录下所有代码
+# Override GOPROXY at build time when a regional mirror is needed.
+ARG GOPROXY=https://proxy.golang.org,direct
+ENV GOPROXY=${GOPROXY}
+# Copy the module source.
 COPY . . 
-# 编译成名为 geecache-server 的二进制文件
-RUN go build -o geecache-server ./cmd/simplecache
+# Build the geecache-server executable.
+RUN CGO_ENABLED=0 go build -buildvcs=false -o geecache-server ./cmd/simplecache
 
-# 2. 运行环境
+# Create the runtime image.
 FROM alpine:latest
 WORKDIR /app
-# 把阶段 1 编译好的二进制文件拿过来
+# Copy the compiled executable from the builder.
 COPY --from=builder /app/geecache-server .
-# 默认启动命令
+# Default command.
 CMD ["./geecache-server"]

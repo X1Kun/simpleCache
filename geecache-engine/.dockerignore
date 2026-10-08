@@ -1,0 +1,11 @@
+# Keep local binaries, test results, and editor state out of the build context.
+bin/
+*.exe
+*.test
+*.out
+geecache_server
+geecache-server
+server
+.git/
+.idea/
+.vscode/

@@ -6,9 +6,9 @@ import (
 )
 
 type BloomFilter struct {
-	bitset []uint64 // 位图（BitMap）
-	size   uint64   // 位图的长度
-	hashes uint     // 使用的哈希函数的数量
+	bitset []uint64 // Bitmap storage.
+	size   uint64   // Number of bits.
+	hashes uint     // Number of hash probes.
 }
 
 func NewBloomFilter(size uint64, hashes uint) *BloomFilter {
@@ -49,30 +49,30 @@ func bloomHashes(key string) (uint64, uint64) {
 	return h1.Sum64(), h2.Sum64() | 1
 }
 
-// Add 将一个 Key 的“指纹”录入布隆过滤器
+// Add sets the bits associated with a key.
 func (bf *BloomFilter) Add(key string) {
 	h1, h2 := bloomHashes(key)
 	for i := uint(0); i < bf.hashes; i++ {
-		// 计算出当前哈希函数对应的 bit 位置
+		// Compute the bit position for this hash probe.
 		idx := (h1 + uint64(i)*h2) % bf.size
-		// 把对应的 bit 位标记为 1
-		// idx/64 找到是哪个 uint64， idx%64 找到是这个 uint64 里的第几个 bit
+		// Set the bit.
+		// Select the uint64 word and the bit within that word.
 		bf.bitset[idx/64] |= 1 << (idx % 64)
 	}
 }
 
-// Contains 判断一个 Key 是否“可能存在”
+// Contains reports whether a key may exist.
 func (bf *BloomFilter) Contains(key string) bool {
 	h1, h2 := bloomHashes(key)
 	for i := uint(0); i < bf.hashes; i++ {
 		idx := (h1 + uint64(i)*h2) % bf.size
 
-		// 检查对应的 bit 位是不是 0
-		// 如果有任何一个哈希函数算出来的位置是 0，说明这个 Key 绝对不存在！
+		// Check whether the corresponding bit is unset.
+		// An unset bit proves absence from the initialized key set.
 		if bf.bitset[idx/64]&(1<<(idx%64)) == 0 {
 			return false
 		}
 	}
-	// 所有的位置都是 1，说明它“大概率”存在
+	// All bits are set; the key may exist.
 	return true
 }

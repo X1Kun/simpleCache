@@ -10,23 +10,23 @@ type Cache struct {
 	byteNow    int64
 	ll         *list.List
 	cache      map[string]*list.Element
-	onEvicted  func(key string, value Value) // 相当于回收站
+	onEvicted  func(key string, value Value) // Callback invoked when an entry is removed.
 }
 
-// cache中双向链表的结构
+// entry stores a key, value, and expiration in the LRU list.
 type entry struct {
-	key      string // 双向链表溯源回map
+	key      string // Key used to remove the entry from the index.
 	value    Value
-	expireAt time.Time // 引入过期时间，如果是0，永不过期
+	expireAt time.Time // A zero timestamp disables expiration.
 }
 
-// 双向链表储存的元素都要实现Len()
+// Value reports its logical byte length.
 type Value interface {
 	Len() int
 }
 
-// 创建cache
-// 指定总容量和回调函数，初始化
+// New creates an LRU cache.
+// Configure logical capacity and an optional removal callback.
 func New(bytesTotal int64, onEvicted func(key string, value Value)) *Cache {
 	return &Cache{
 		bytesTotal: bytesTotal,
@@ -37,8 +37,8 @@ func New(bytesTotal int64, onEvicted func(key string, value Value)) *Cache {
 	}
 }
 
-// 按键查找
-// 1、在cache的map中查找key对应元素 2、返回元素 3、将元素移到队首
+// Get looks up a key.
+// Expired entries are removed; successful reads refresh recency.
 func (c *Cache) Get(key string) (Value, bool) {
 	if e, ok := c.cache[key]; ok {
 		kv := e.Value.(*entry)
@@ -53,8 +53,8 @@ func (c *Cache) Get(key string) (Value, bool) {
 	return nil, false
 }
 
-// 移除最不经常使用的元素
-// 1、将Cache双向链表中队尾的元素移除 2、删除map中对应元素 3、并计算空间变化 4、执行回调函数（例如：关闭资源、统计监控、联动删除）
+// RemoveOldest removes the least recently used entry.
+// Removal updates the list, index, byte count, and optional callback.
 func (c *Cache) RemoveOldest() {
 	e := c.ll.Back()
 	if e != nil {
@@ -72,10 +72,10 @@ func (c *Cache) RemoveElement(ele *list.Element) {
 	}
 }
 
-// cache中添加元素
-// 1、如果cache的map中找到了对应key，则将元素移动到队头，并更改其值和空间占用
-// 2、如果没找到，则新建一个元素放到队头，并写入map，计算空间变化
-// 3、移除超过空间的最不经常访问的元素
+// Add inserts or updates an entry.
+// Updates refresh recency, value size, and expiration.
+// New entries are inserted at the front and added to the index.
+// Least recently used entries are removed until capacity is satisfied.
 func (c *Cache) Add(key string, value Value, ttl time.Duration) {
 
 	var expireAt time.Time
@@ -99,7 +99,7 @@ func (c *Cache) Add(key string, value Value, ttl time.Duration) {
 	}
 }
 
-// 返回cache中元素个数
+// Len returns the number of stored entries.
 func (c *Cache) Len() int {
 	return c.ll.Len()
 }

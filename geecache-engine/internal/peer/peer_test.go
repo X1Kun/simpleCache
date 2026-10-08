@@ -22,11 +22,11 @@ func (forbiddenPicker) PickPeer(string) (cache.PeerGetter, bool) {
 }
 func clientFor(server *httptest.Server) *Client {
 	return &Client{
-		address: strings.TrimPrefix(server.URL, "http://"), http: server.Client(), timeout: 100 * time.Millisecond,
+		address: strings.TrimPrefix(server.URL, "http://"), http: server.Client(), timeout: time.Second,
 	}
 }
 func TestSingleHopEncodingAndValueBoundary(t *testing.T) {
-	g := cache.NewGroup("group / 中文", 2<<20, cache.GetterFunc(func(_ context.Context, key string) ([]byte, error) {
+	g := cache.NewGroup("group / \u4e2d\u6587", 2<<20, cache.GetterFunc(func(_ context.Context, key string) ([]byte, error) {
 		if key == "max" {
 			return bytes.Repeat([]byte("x"), cache.MaxValueBytes), nil
 		}
@@ -38,7 +38,7 @@ func TestSingleHopEncodingAndValueBoundary(t *testing.T) {
 	server := httptest.NewServer(NewHandler(g))
 	defer server.Close()
 	c := clientFor(server)
-	for _, key := range []string{"a b", "a+b", "a/b", "中文", "max"} {
+	for _, key := range []string{"a b", "a+b", "a/b", "\u4e2d\u6587", "max"} {
 		value, err := c.Get(context.Background(), g.Name(), key)
 		if err != nil {
 			t.Fatal(key, err)

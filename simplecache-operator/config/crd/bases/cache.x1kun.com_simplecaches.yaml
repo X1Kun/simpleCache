@@ -44,10 +44,10 @@ spec:
                   to remove/update
                 type: string
               image:
-                description: 'Image 定义拉起缓存节点所使用的 Docker 镜像 (比如: "x1kun/geecache:v1")'
+                description: Image is the cache container image, for example x1kun/geecache:v1.
                 type: string
               size:
-                description: Size 定义期望的缓存节点数量
+                description: Size is the desired number of cache nodes.
                 format: int32
                 minimum: 1
                 type: integer

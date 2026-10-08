@@ -1,25 +1,25 @@
-# 服务
+# Services.
 services:
-  # 服务名
+  # Compose service name.
   cache-1:
-    # 告诉 Docker 用当前目录的 Dockerfile 构建镜像
+    # Build the image from this module directory.
     build: .     
-    # 容器名   
+    # Container name.   
     container_name: cache-1 
     ports:
-      # 端口映射：[宿主机端口]:[容器内端口]
+      # Port mapping: host port to container port.
       - "9999:9999"      
     environment:
-      # 配置环境变量
+      # Static peer configuration.
       - SELF_ADDR=http://cache-1:8001
       - PEERS=http://cache-1:8001,http://cache-2:8001,http://cache-3:8001
-    # 覆盖 Dockerfile 的 CMD，开启 api 模式，监听容器内的 8001
+    # Enable the API and listen on the internal peer port.
     command: ["./geecache-server", "-port=8001", "-api=1"]
 
   cache-2:
     build: .
     container_name: cache-2
-    # 这里没有 ports 端口映射，不对外暴露端口
+    # Peer-only node; no published host port.
     environment:
       - SELF_ADDR=http://cache-2:8001
       - PEERS=http://cache-1:8001,http://cache-2:8001,http://cache-3:8001

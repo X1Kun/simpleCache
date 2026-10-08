@@ -1,13 +1,13 @@
-# 忽略特定的二进制文件
+# Ignore local executable artifacts.
 geecache_server.exe
 *.exe
 
-# 忽略 Go 常见的编译产物和临时文件
+# Ignore Go build and test artifacts.
 bin/
 *.test
 *.out
 
-# 忽略 K8s 和 Mac/Win 常见的临时文件
+# Ignore local editor and operating-system files.
 .DS_Store
 .idea/
 .vscode/

@@ -39,6 +39,8 @@ type SimpleCacheReconciler struct {
 	Scheme *runtime.Scheme
 }
 
+const peerListEnv = "PEERS"
+
 // +kubebuilder:rbac:groups=cache.x1kun.com,resources=simplecaches,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=cache.x1kun.com,resources=simplecaches/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=cache.x1kun.com,resources=simplecaches/finalizers,verbs=update
@@ -53,27 +55,27 @@ type SimpleCacheReconciler struct {
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.23.1/pkg/reconcile
 func (r *SimpleCacheReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	// 1. 初始化日志记录器
-	log := log.FromContext(ctx)
+	// Initialize the request-scoped logger.
+	logger := log.FromContext(ctx)
 
-	// 2. 去K8s数据库里，取出SimpleCache的CRD
+	// Fetch the SimpleCache resource from the API server.
 	var cacheResource cachev1.SimpleCache
 	if err := r.Get(ctx, req.NamespacedName, &cacheResource); err != nil {
-		// 找不到此资源，直接返回，不报错
+		// Ignore a deleted or missing resource.
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	// 3. 打印日志，证明operator成功进行
-	log.Info("Reconcile succeeded",
-		"集群名字", cacheResource.Name,
-		"期望的节点数量(Size)", cacheResource.Spec.Size,
-		"使用的镜像(Image)", cacheResource.Spec.Image,
+	// Record the desired cluster configuration.
+	logger.Info("Reconciling SimpleCache",
+		"clusterName", cacheResource.Name,
+		"desiredReplicas", cacheResource.Spec.Size,
+		"image", cacheResource.Spec.Image,
 	)
 
-	// 4. 动态生成并拼接 peers 字符串
-	// 例如 size=3 时，拼接出：http://name-0.name-svc...:8001,http://name-1.name-svc...:8001...
+	// Build the static peer list from the desired replica count.
+	// For three replicas, use the stable Pod DNS names for ordinals 0 through 2.
 	var peers []string
-	svcName := cacheResource.Name + "-svc" // 假定我们配套的 Service 叫这个名字
+	svcName := cacheResource.Name + "-svc" // Name of the governing headless Service.
 	for i := int32(0); i < cacheResource.Spec.Size; i++ {
 		peerURL := fmt.Sprintf("http://%s-%d.%s.%s.svc.cluster.local:8001",
 			cacheResource.Name, i, svcName, cacheResource.Namespace)
@@ -83,14 +85,14 @@ func (r *SimpleCacheReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 
 	labels := map[string]string{"app": cacheResource.Name}
 
-	// 5. 在内存里创建 Headless Service
+	// Construct the desired headless Service.
 	svc := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      svcName,
 			Namespace: cacheResource.Namespace,
 		},
 		Spec: corev1.ServiceSpec{
-			// 无头服务
+			// Headless Service.
 			ClusterIP: "None",
 			Selector:  labels,
 			Ports: []corev1.ServicePort{
@@ -99,20 +101,22 @@ func (r *SimpleCacheReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 			},
 		},
 	}
-	// 对这个 Service 建立 owner 映射
-	ctrl.SetControllerReference(&cacheResource, svc, r.Scheme)
+	// Assign the SimpleCache resource as the Service owner.
+	if err := ctrl.SetControllerReference(&cacheResource, svc, r.Scheme); err != nil {
+		return ctrl.Result{}, err
+	}
 
-	// 查看 Service 是否存在，不存在则创建 Headless Service
+	// Create the governing Service if it does not exist.
 	foundSvc := &corev1.Service{}
 	err := r.Get(ctx, types.NamespacedName{Name: svc.Name, Namespace: svc.Namespace}, foundSvc)
 	if err != nil && apierrors.IsNotFound(err) {
-		log.Info("不存在 Service，开始自动创建网络！", "Name", svc.Name)
+		logger.Info("Creating headless Service", "Name", svc.Name)
 		if err = r.Create(ctx, svc); err != nil {
 			return ctrl.Result{}, err
 		}
 	}
 
-	// 6. 在内存里创建 StatefulSet
+	// Construct the desired StatefulSet.
 	sts := &appsv1.StatefulSet{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      cacheResource.Name,
@@ -120,7 +124,7 @@ func (r *SimpleCacheReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		},
 		Spec: appsv1.StatefulSetSpec{
 			Replicas: &cacheResource.Spec.Size,
-			// 绑定无头服务
+			// Use the governing headless Service.
 			ServiceName: svcName,
 			Selector:    &metav1.LabelSelector{MatchLabels: labels},
 			Template: corev1.PodTemplateSpec{
@@ -142,8 +146,8 @@ func (r *SimpleCacheReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 								Value: fmt.Sprintf("http://$(POD_NAME).%s.%s.svc.cluster.local:8001", svcName, cacheResource.Namespace),
 							},
 							{
-								Name:  "PEERS",
-								Value: peersStr, // 动态计算的 peers
+								Name:  peerListEnv,
+								Value: peersStr, // Static peer list derived from the replica count.
 							},
 						},
 					}},
@@ -152,49 +156,49 @@ func (r *SimpleCacheReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		},
 	}
 
-	// 7. 建立owner映射：这个 StatefulSet 是与 SimpleCache 挂钩的。如果 SimpleCache 被删了，K8s 会自动把这个 StatefulSet 也删掉（级联删除）
+	// Assign ownership so Kubernetes can garbage-collect the StatefulSet when the CR is deleted.
 	if err = ctrl.SetControllerReference(&cacheResource, sts, r.Scheme); err != nil {
 		return ctrl.Result{}, err
 	}
 
-	// 8. K8s 检查 StatefulSet 是否被创建
+	// Look up the current StatefulSet.
 	foundSts := &appsv1.StatefulSet{}
 	err = r.Get(ctx, types.NamespacedName{Name: sts.Name, Namespace: sts.Namespace}, foundSts)
 
 	if err != nil && apierrors.IsNotFound(err) {
-		// 如果没有，立刻向 K8s 发送请求创建它
-		log.Info("目前不存在此 StatefulSet，开始自动创建！", "Name", sts.Name)
+		// Create the StatefulSet when missing.
+		logger.Info("Creating StatefulSet", "Name", sts.Name)
 		err = r.Create(ctx, sts)
 		if err != nil {
 			return ctrl.Result{}, err
 		}
-		// 创建成功
+		// Creation completed.
 		return ctrl.Result{}, nil
 	} else if err != nil {
-		// 发生了网络错误等其他意外
+		// Propagate API or transport errors.
 		return ctrl.Result{}, err
 	}
 
 	var existingPeers string
 	for _, env := range foundSts.Spec.Template.Spec.Containers[0].Env {
-		if env.Name == "PEERS" {
+		if env.Name == peerListEnv {
 			existingPeers = env.Value
 			break
 		}
 	}
 	existingImage := foundSts.Spec.Template.Spec.Containers[0].Image
 
-	// 9. 检查 StatefulSet 和现在的 cache 是否匹配
+	// Compare the current StatefulSet with the desired configuration.
 	if *foundSts.Spec.Replicas != cacheResource.Spec.Size || existingPeers != peersStr || existingImage != cacheResource.Spec.Image {
-		log.Info("检测到配置或镜像差异，开始执行网络拓扑更新或滚动发布！", "当前镜像", existingImage, "期望镜像", cacheResource.Spec.Image)
-		// 更新 StatefulSet 的副本数量
+		logger.Info("Updating StatefulSet configuration", "currentImage", existingImage, "desiredImage", cacheResource.Spec.Image)
+		// Update the replica count.
 		foundSts.Spec.Replicas = &cacheResource.Spec.Size
-		// 更新 StatefulSet 的镜像版本
+		// Update the cache image.
 		foundSts.Spec.Template.Spec.Containers[0].Image = cacheResource.Spec.Image
-		// 更新 StatefulSet 的 peer 环境变量
+		// Update the static PEERS environment variable.
 		for i, env := range foundSts.Spec.Template.Spec.Containers[0].Env {
-			if env.Name == "PEERS" {
-				// peersStr 是我们在第 2 步 for 循环里最新算出来的 5 个节点的字符串
+			if env.Name == peerListEnv {
+				// Use the freshly generated peer list.
 				foundSts.Spec.Template.Spec.Containers[0].Env[i].Value = peersStr
 				break
 			}
@@ -204,7 +208,7 @@ func (r *SimpleCacheReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 			return ctrl.Result{}, err
 		}
 	}
-	// 返回成功，等待下一次风吹草动
+	// Wait for the next reconciliation event.
 	return ctrl.Result{}, nil
 }
 

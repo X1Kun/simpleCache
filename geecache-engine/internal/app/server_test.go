@@ -63,13 +63,13 @@ func TestMetricsCountActualLoadsAndLocalHits(t *testing.T) {
 		t.Fatalf("metrics do not reflect requests/source/Bloom: %v", totals)
 	}
 }
-func TestConfigRejectsUnsupportedDiscovery(t *testing.T) {
+func TestConfigRejectsIncompleteKubernetesDiscovery(t *testing.T) {
 	t.Setenv("DISCOVERY_MODE", "kubernetes")
 	t.Setenv("POD_NAME", "")
 	t.Setenv("POD_NAMESPACE", "")
 	t.Setenv("PEER_SERVICE", "")
 	if _, err := FromEnv(8001, true); err == nil {
-		t.Fatal("unsupported discovery mode accepted")
+		t.Fatal("incomplete Kubernetes identity accepted")
 	}
 	t.Setenv("DISCOVERY_MODE", "static")
 	t.Setenv("SELF_ADDR", "")
@@ -81,6 +81,23 @@ func TestConfigRejectsUnsupportedDiscovery(t *testing.T) {
 	t.Setenv("SELF_ADDR", "http://user:secret@localhost:8001")
 	if _, err := FromEnv(8001, true); err == nil {
 		t.Fatal("credential URL accepted")
+	}
+}
+
+func TestKubernetesIdentityIsIndependentOfTransport(t *testing.T) {
+	t.Setenv("DISCOVERY_MODE", "kubernetes")
+	t.Setenv("POD_NAME", "cache-1")
+	t.Setenv("POD_NAMESPACE", "demo")
+	t.Setenv("PEER_SERVICE", "cache-svc")
+	t.Setenv("SELF_ADDR", "http://stale-address:8001")
+	t.Setenv("PEERS", "http://stale-address:8001")
+	c, err := FromEnv(8001, true)
+	if err != nil || c.SelfID != "demo/cache-1" || len(c.Members) != 0 {
+		t.Fatalf("unexpected Kubernetes configuration: %+v %v", c, err)
+	}
+	t.Setenv("DISCOVERY_MODE", "unknown")
+	if _, err := FromEnv(8001, true); err == nil {
+		t.Fatal("unknown discovery mode accepted")
 	}
 }
 

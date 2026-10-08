@@ -1,5 +1,5 @@
 # Build the cache binary.
-FROM golang:1.24-alpine AS builder
+FROM golang:1.25-alpine AS builder
 WORKDIR /app
 # Override GOPROXY at build time when a regional mirror is needed.
 ARG GOPROXY=https://proxy.golang.org,direct

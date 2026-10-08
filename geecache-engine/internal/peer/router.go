@@ -5,8 +5,10 @@ import (
 	"net"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/X1Kun/simpleCache/geecache-engine/internal/cache"
@@ -26,8 +28,8 @@ type Router struct {
 	selfID   string
 	client   *http.Client
 	timeout  time.Duration
-	updateMu sync.RWMutex
-	state    *snapshot
+	updateMu sync.Mutex
+	state    atomic.Pointer[snapshot]
 }
 
 func NewRouter(selfID string, timeout time.Duration) *Router {
@@ -60,20 +62,21 @@ func (r *Router) Update(input []Member) error {
 			return fmt.Errorf("invalid member %q: %q", m.ID, m.Address)
 		}
 		if len(normalized) > 0 && normalized[len(normalized)-1].ID == m.ID {
+			// Lexical address order is the deterministic tie-break for transient duplicates.
 			continue
 		}
 		normalized = append(normalized, m)
 	}
-	previous := r.state
+	previous := r.state.Load()
 	if previous != nil && sameMembers(previous.members, normalized) {
 		return nil
 	}
-	next := &snapshot{ring: hashring.New(50, nil), clients: make(map[string]*Client), members: normalized}
+	next := &snapshot{ring: hashring.New(100, nil), clients: make(map[string]*Client), members: normalized}
 	for _, m := range normalized {
 		next.ring.Add(m.ID)
 		next.clients[m.ID] = &Client{address: m.Address, http: r.client, timeout: r.timeout}
 	}
-	r.state = next
+	r.state.Store(next)
 	return nil
 }
 func validAddress(address string) bool {
@@ -81,7 +84,8 @@ func validAddress(address string) bool {
 		return false
 	}
 	host, port, err := net.SplitHostPort(address)
-	return err == nil && host != "" && port != ""
+	number, parseErr := strconv.Atoi(port)
+	return err == nil && parseErr == nil && host != "" && number > 0 && number <= 65535
 }
 func sameMembers(a, b []Member) bool {
 	if len(a) != len(b) {
@@ -95,18 +99,12 @@ func sameMembers(a, b []Member) bool {
 	return true
 }
 func (r *Router) PickPeer(key string) (cache.PeerGetter, bool) {
-	r.updateMu.RLock()
-	defer r.updateMu.RUnlock()
-	s := r.state
+	s := r.state.Load()
 	id := s.ring.Get(key)
 	if id == "" || id == r.selfID {
 		return nil, false
 	}
 	return s.clients[id], true
 }
-func (r *Router) Members() []Member {
-	r.updateMu.RLock()
-	defer r.updateMu.RUnlock()
-	return append([]Member(nil), r.state.members...)
-}
-func (r *Router) Close() { r.client.CloseIdleConnections() }
+func (r *Router) Members() []Member { return append([]Member(nil), r.state.Load().members...) }
+func (r *Router) Close()            { r.client.CloseIdleConnections() }

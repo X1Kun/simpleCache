@@ -15,7 +15,7 @@ geecache_server
 geecache-server
 /geecache-engine/server
 
-/PLAN.md
+# Prevent local handoff records from being accidentally reintroduced.
 /docs/REFACTOR_STATE.md
 /docs/VALIDATION.md
 /docs/legacy/

@@ -6,54 +6,44 @@ import (
 	"strconv"
 )
 
-// Hash maps bytes to a ring position.
-type Hash func(data []byte) uint32
-
-// Map implements a consistent hash ring.
+type Hash func([]byte) uint32
 type Map struct {
-	hash     Hash           // Hash function for virtual nodes and keys.
-	replicas int            // Virtual nodes per physical node.
-	keys     []int          // Sorted virtual-node positions.
-	hashMap  map[int]string // Ring position to physical-node mapping.
+	hash     Hash
+	replicas int
+	keys     []uint32
+	owners   map[uint32]string
 }
 
-func New(replicas int, fn Hash) *Map {
-	m := &Map{
-		hash:     fn,
-		replicas: replicas,
-		hashMap:  make(map[int]string),
+func New(replicas int, hash Hash) *Map {
+	if replicas <= 0 {
+		panic("replicas must be positive")
 	}
-	if m.hash == nil {
-		m.hash = crc32.ChecksumIEEE
+	if hash == nil {
+		hash = crc32.ChecksumIEEE
 	}
-	return m
+	return &Map{hash: hash, replicas: replicas, owners: make(map[uint32]string)}
 }
-
-// Add creates virtual nodes, records their owners, and sorts their positions.
-func (m *Map) Add(keys ...string) {
-	for _, key := range keys {
+func (m *Map) Add(nodes ...string) {
+	for _, node := range nodes {
 		for i := 0; i < m.replicas; i++ {
-			// Hash each replica index followed by the node key.
-			hash := int(m.hash([]byte(strconv.Itoa(i) + key)))
-			// Append the virtual-node position.
-			m.keys = append(m.keys, hash)
-			// Associate the virtual-node position with its physical owner.
-			m.hashMap[hash] = key
+			hash := m.hash([]byte(strconv.Itoa(i) + ":" + node))
+			if old, exists := m.owners[hash]; exists {
+				if node < old {
+					m.owners[hash] = node
+				}
+			} else {
+				m.keys = append(m.keys, hash)
+				m.owners[hash] = node
+			}
 		}
 	}
-	sort.Ints(m.keys)
+	sort.Slice(m.keys, func(i, j int) bool { return m.keys[i] < m.keys[j] })
 }
-
-// Get finds the first ring position at or after the key hash and returns its owner.
 func (m *Map) Get(key string) string {
 	if len(m.keys) == 0 {
 		return ""
 	}
-	hash := int(m.hash([]byte(key)))
-	// Find the clockwise successor; modulo wraps past the final position.
-	idx := sort.Search(len(m.keys), func(i int) bool {
-		return m.keys[i] >= hash
-	})
-	// Resolve the selected virtual position to a physical owner.
-	return m.hashMap[m.keys[idx%len(m.keys)]] // Keys beyond the final position wrap to the first node.
+	hash := m.hash([]byte(key))
+	i := sort.Search(len(m.keys), func(i int) bool { return m.keys[i] >= hash })
+	return m.owners[m.keys[i%len(m.keys)]]
 }

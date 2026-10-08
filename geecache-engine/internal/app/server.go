@@ -11,9 +11,12 @@ import (
 
 	"github.com/X1Kun/simpleCache/geecache-engine/internal/cache"
 	"github.com/X1Kun/simpleCache/geecache-engine/internal/demo"
+	"github.com/X1Kun/simpleCache/geecache-engine/internal/discovery"
 	"github.com/X1Kun/simpleCache/geecache-engine/internal/peer"
 	"github.com/X1Kun/simpleCache/geecache-engine/internal/telemetry"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 )
 
 func APIHandler(group *cache.Group, ready func() bool, metrics *telemetry.Metrics) http.Handler {
@@ -74,11 +77,27 @@ func Run(ctx context.Context, c Config) error {
 	group := cache.NewGroup("scores", c.CacheBytes, source, cache.Options{
 		TTL: c.TTL, KnownKeys: source.Keys(), Peers: router, Lifecycle: work, Limiter: cache.NewSourceLimiter(c.SourceConcurrency), Observer: metrics,
 	})
-	if c.DiscoveryMode != "static" {
-		return errors.New("only static discovery is supported")
+	var watcher *discovery.Watcher
+	if c.DiscoveryMode == "kubernetes" {
+		config, err := rest.InClusterConfig()
+		if err != nil {
+			return err
+		}
+		client, err := kubernetes.NewForConfig(config)
+		if err != nil {
+			return err
+		}
+		watcher, err = discovery.New(client, c.Namespace, c.PeerService, router)
+		if err != nil {
+			return err
+		}
+		watcher.Report = metrics.Membership
+		watcher.ReportError = metrics.DiscoveryError
+	} else if c.DiscoveryMode != "static" {
+		return errors.New("unsupported discovery mode")
 	}
 	var serving atomic.Bool
-	ready := func() bool { return serving.Load() }
+	ready := func() bool { return serving.Load() && (watcher == nil || watcher.Ready()) }
 	servers := []*http.Server{{Addr: c.PeerAddr, Handler: peer.NewHandler(group), ReadHeaderTimeout: 3 * time.Second, IdleTimeout: 30 * time.Second}}
 	if c.API {
 		servers = append(servers, &http.Server{Addr: c.APIAddr, Handler: APIHandler(group, ready, metrics), ReadHeaderTimeout: 3 * time.Second, IdleTimeout: 30 * time.Second})
@@ -94,6 +113,9 @@ func Run(ctx context.Context, c Config) error {
 			return err
 		}
 		listeners = append(listeners, listener)
+	}
+	if watcher != nil {
+		go watcher.Run(work)
 	}
 	slog.Info("Cache server started", "identity", c.SelfID, "discovery", c.DiscoveryMode)
 	return serve(ctx, servers, listeners, &serving)

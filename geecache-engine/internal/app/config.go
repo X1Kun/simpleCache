@@ -14,6 +14,7 @@ import (
 
 type Config struct {
 	PeerAddr, APIAddr, SelfID, DiscoveryMode string
+	Namespace, PeerService                   string
 	API                                      bool
 	CacheBytes                               int64
 	TTL                                      time.Duration
@@ -24,6 +25,7 @@ type Config struct {
 func FromEnv(port int, api bool) (Config, error) {
 	c := Config{PeerAddr: fmt.Sprintf("0.0.0.0:%d", port), APIAddr: "0.0.0.0:9999", API: api,
 		CacheBytes: 64 << 20, TTL: time.Minute, SourceConcurrency: 32, DiscoveryMode: os.Getenv("DISCOVERY_MODE"),
+		Namespace: os.Getenv("POD_NAMESPACE"), PeerService: os.Getenv("PEER_SERVICE"),
 	}
 	if port < 1 || port > 65535 {
 		return c, fmt.Errorf("invalid peer port")
@@ -64,6 +66,12 @@ func FromEnv(port int, api bool) (Config, error) {
 		c.SourceConcurrency = parsed
 	}
 	switch c.DiscoveryMode {
+	case "kubernetes":
+		pod := os.Getenv("POD_NAME")
+		if pod == "" || c.Namespace == "" || c.PeerService == "" {
+			return c, fmt.Errorf("Kubernetes discovery requires POD_NAME, POD_NAMESPACE and PEER_SERVICE")
+		}
+		c.SelfID = c.Namespace + "/" + pod
 	case "static":
 		self := os.Getenv("SELF_ADDR")
 		if self == "" {

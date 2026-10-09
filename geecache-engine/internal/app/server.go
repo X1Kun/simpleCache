@@ -77,6 +77,7 @@ func Run(ctx context.Context, c Config) error {
 	group := cache.NewGroup("scores", c.CacheBytes, source, cache.Options{
 		TTL: c.TTL, KnownKeys: source.Keys(), Peers: router, Lifecycle: work, Limiter: cache.NewSourceLimiter(c.SourceConcurrency), Observer: metrics,
 	})
+	metrics.ObserveCache(group)
 	var watcher *discovery.Watcher
 	if c.DiscoveryMode == "kubernetes" {
 		config, err := rest.InClusterConfig()

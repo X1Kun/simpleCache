@@ -11,6 +11,7 @@ type cache struct {
 	mu         sync.Mutex
 	lru        *lru.Cache
 	cacheBytes int64
+	evictions  uint64
 }
 
 // add inserts an entry while holding the cache lock.
@@ -20,9 +21,27 @@ func (c *cache) add(key string, value ByteView, ttl time.Duration) {
 	defer c.mu.Unlock()
 	// lazy initialization
 	if c.lru == nil {
-		c.lru = lru.New(c.cacheBytes, nil)
+		c.lru = lru.New(c.cacheBytes, func(string, lru.Value) { c.evictions++ })
 	}
 	c.lru.Add(key, value, ttl)
+}
+
+// Stats describes local logical storage; expired entries are removed lazily.
+type Stats struct {
+	Bytes    int64  `json:"logical_bytes"`
+	Capacity int64  `json:"capacity_bytes"`
+	Entries  int    `json:"entries"`
+	Removals uint64 `json:"removals"`
+}
+
+func (c *cache) stats() Stats {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	s := Stats{Capacity: c.cacheBytes, Removals: c.evictions}
+	if c.lru != nil {
+		s.Bytes, s.Entries = c.lru.Bytes(), c.lru.Len()
+	}
+	return s
 }
 
 // get retrieves an entry while holding the cache lock.

@@ -11,22 +11,36 @@ Focus: Go distributed-system reliability and Kubernetes platform engineering. Re
 | EndpointSlice membership and atomic snapshots | Complete; local contracts verified |
 | Root CI and English documentation | Complete; hosted runs remain separate |
 | Complete Operator resource/discovery contract | Implemented; envtest/race passed |
-| Dedicated Kind deployment smoke | Prepared; live verification pending |
-| Monitoring, resource experiments, Profiling | Pending |
+| Original dedicated Kind deployment smoke | Passed in the user's local terminal |
+| Adversarial validation and per-run reports | Implemented; consult each run's results |
+| Local diagnostic baseline and test-process profiles | Automated by make validate |
+| Expanded Kind continuity/resource recovery | Passed locally; each run generates independent evidence |
 
-## Current: complete real-cluster verification
+## Current: validate the expanded suite
 
 Operator Services/StatefulSet/account/permissions, child watches, resources/probes/Status and conflict/default handling are implemented. Static PEERS is removed and controller tests reflect the new contract.
 
 Acceptance: envtest plus dedicated Kind startup/read; child repair; 3→5→2 membership convergence without restarting existing Pods just to publish peers. Retain app.serve, existing cancellation/boundary tests, and current CI.
 
-Envtest/race passed. Run make kind-up and make kind-smoke on the prepared isolated setup to finish live evidence. Docker/Kind execution could not complete through the current tool backend; do not treat it as passed or add Kubernetes CI until local smoke is confirmed.
+Envtest/race and the original local Kind smoke passed. Run make validate for engine race checks and bounded non-race diagnostics/profiles. Run make kind-smoke for continuous reads during two scaling cycles/Pod repair, then an impossible CPU request with Unschedulable/Ready=False and recovery. Each run saves report.md/report.json, logs and artifacts under ignored bin/reports. The expanded local Kind run on 2026-10-09 passed: 914 concurrent reads, zero errors/incorrect values, P99 105.204ms during the continuity window. This is a functional observation, not a throughput claim. Resource rollback explicitly removes Pending test Pods; it does not claim fully autonomous invalid-rollout recovery.
+
+Deterministic local evidence: the fixed 100,000-key dataset moved 25.364% of owners
+on 3→4 expansion, all toward the new node. The 16KiB cache reloaded all 768
+sequential reads of a roughly 1MiB working set over three passes and stayed within
+its logical byte bound. Same-key bursts performed one actual source load;
+different-key bursts stayed within the configured source concurrency limit.
 
 ## Then: monitoring and diagnosis, about 1–2 days
 
-Replace fixed-Pod scrape targets, provision a small Grafana dashboard, and add missing capacity observations. Offer disabled-by-default admin Profiling.
+Logical cache bytes/capacity/entries/removals and test-process CPU/heap/mutex/block profiles are implemented. Use profiles to identify a real bottleneck before optimizing. A small dynamic-scrape dashboard and private deployed-process profiling remain optional follow-up; no public pprof endpoint is added.
 
 Acceptance: all active Pods are visible; counters match actual operations; CPU/heap/mutex/block captures are reproducible. Identify a real bottleneck before choosing an optimization.
+
+Initial diagnostic finding (2026-10-09): the combined loopback client/server CPU
+profile is dominated by syscalls, and allocation leaders include HTTP buffers and
+io.ReadAll. This profile includes the load generator and synthetic source, so it
+does not justify a cache-path optimization. Separate client/server profiling or
+scenario-specific captures before attributing costs or claiming improvement.
 
 ## Then: bounded experiments, about 2–3 days
 
@@ -35,14 +49,14 @@ Acceptance: all active Pods are visible; counters match actual operations; CPU/h
 | Cold hot key / slow peer | Correct values, actual source calls, fallback and elapsed time |
 | Scale / owner Pod loss | Convergence, Pod UIDs/restarts, routing changes |
 | Small cache | Logical byte bounds, eviction and successful reload |
-| CPU/memory limits | Throttling/heap/Pod observations, errors and latency |
+| CPU/memory limits | Test-process heap and latency; deployed throttling remains follow-up |
 | Infeasible resource request | Pending/events, controller condition, recovery |
 
-Use a fixed dataset/seed, explicit resources, warmup and value checks. Start with 10–30 second diagnostic samples. Record P50/P95/P99 only for actual runs; do not invent QPS or improvement percentages. Any controlled OOM belongs to one named Pod in the dedicated cluster, never host-wide pressure.
+Use a fixed dataset/seed, explicit resources, warmup and value checks. Automated HTTP diagnostics use one-second samples per scenario to keep the default suite short; repeat/extend samples for performance investigations. Record P50/P95/P99 only for actual runs; do not invent QPS or improvement percentages. No OOM drill is included; any future controlled OOM belongs to one named Pod in the dedicated cluster, never host-wide pressure.
 
 ## Delivery, about 1 day
 
-Add lightweight Kubernetes CI after local smoke is stable. Keep slow experiments manual. Publish one investigation: symptom → hypothesis → evidence/profile → change → measured comparison.
+Current CI uploads local adversarial reports/profiles, including failures. Add lightweight Kubernetes CI only after the expanded local smoke is stable. Keep fault scenarios manual. Publish one investigation: symptom → hypothesis → evidence/profile → change → measured comparison. If no actionable bottleneck appears, preserve the implementation and state that. Loopback results are not deployed throughput; logical bytes are not RSS and Pending is not OOM validation.
 
 Complete means active code, repeatable cluster behavior, useful metrics, one resource/failure demonstration, and accurate limitations. Performance proof is separate from functional tests.
 

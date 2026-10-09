@@ -103,3 +103,6 @@ func (c *Cache) Add(key string, value Value, ttl time.Duration) {
 func (c *Cache) Len() int {
 	return c.ll.Len()
 }
+
+// Bytes reports logical key/value bytes, excluding Go object overhead.
+func (c *Cache) Bytes() int64 { return c.byteNow }

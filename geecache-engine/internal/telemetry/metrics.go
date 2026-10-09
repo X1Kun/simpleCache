@@ -2,6 +2,7 @@
 package telemetry
 
 import (
+	"github.com/X1Kun/simpleCache/geecache-engine/internal/cache"
 	"github.com/prometheus/client_golang/prometheus"
 	"time"
 )
@@ -65,6 +66,16 @@ func (m *Metrics) Observe(operation, result string, elapsed time.Duration) {
 	}
 }
 func (m *Metrics) Inflight(delta float64) { m.inflight.Add(delta) }
+
+// ObserveCache registers logical storage observations for the process's group.
+func (m *Metrics) ObserveCache(group *cache.Group) {
+	m.Registry.MustRegister(
+		prometheus.NewGaugeFunc(prometheus.GaugeOpts{Name: "simplecache_cache_bytes", Help: "Logical key/value bytes, not process RSS"}, func() float64 { return float64(group.Stats().Bytes) }),
+		prometheus.NewGaugeFunc(prometheus.GaugeOpts{Name: "simplecache_cache_capacity_bytes", Help: "Configured logical cache capacity"}, func() float64 { return float64(group.Stats().Capacity) }),
+		prometheus.NewGaugeFunc(prometheus.GaugeOpts{Name: "simplecache_cache_entries", Help: "Stored entries including lazily expired entries"}, func() float64 { return float64(group.Stats().Entries) }),
+		prometheus.NewCounterFunc(prometheus.CounterOpts{Name: "simplecache_cache_removals_total", Help: "Capacity evictions and lazy expiration removals"}, func() float64 { return float64(group.Stats().Removals) }),
+	)
+}
 func (m *Metrics) Membership(count int, changed bool) {
 	m.members.Set(float64(count))
 	if changed {

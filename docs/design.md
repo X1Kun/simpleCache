@@ -15,6 +15,7 @@ The cache process handles reads, source protection, routing, and member discover
 | internal/discovery | Service-selected EndpointSlice informer |
 | internal/demo | Finite immutable source |
 | internal/telemetry | Per-process metrics registry |
+| internal/diagnostics | Bounded independent-process investigation tooling |
 
 Engine paths are relative to geecache-engine. The Operator retains Kubebuilder's api/cmd/internal/config layout. Each component has one Go module. cache owns source, peer, and observer interfaces without importing HTTP, Protobuf, or Kubernetes.
 
@@ -63,6 +64,19 @@ Default logical capacity is 64MiB and TTL 60s. Expiration is lazy; accounting co
 All listeners bind before readiness. Shutdown clears readiness, drains HTTP requests, then cancels shared work.
 
 Metrics distinguish API/peer local lookups, actual peer requests, actual Getter calls, source-slot waits/inflight, Bloom rejection, fallback, and members/publications/errors. Waiters are not extra source loads. Labels do not include keys, arbitrary URLs, or error text.
+
+DEBUG_ADDR is disabled by default and accepts only literal loopback IPs. Its
+separate explicit mux serves profiles, never the public API/peer mux. All listeners
+bind before startup and drain during shutdown. Mutex/block sampling is opt-in for
+profiled fixture runs only. No Operator Service exposes the diagnostic port.
+
+Manual diagnostics use a separate client and fresh server subprocess per trial.
+The fixture shares RunWithSource with normal startup, changing only the declared
+source padding/capacity for pressure experiments. Unprofiled repeated baselines
+and profiled diagnostic trials are separate; process PIDs and the matched binary
+digest prevent attribution to the load generator. Reported resource deltas exclude
+warmup but include periodic metrics scraping. Logical cache bounds do not constrain
+the immutable source's dataset, Go overhead or RSS.
 
 ## Operator integration
 

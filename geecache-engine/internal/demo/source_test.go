@@ -38,3 +38,30 @@ func TestFiniteSourceAndBloomAgree(t *testing.T) {
 		t.Fatal("Keys must not expose mutable source state")
 	}
 }
+
+func TestSizedFixtureDoesNotChangeDefaultValues(t *testing.T) {
+	source := NewSized(0, 4096)
+	for _, key := range []string{"Auto-0", "Auto-9999"} {
+		value, err := source.Get(context.Background(), key)
+		if err != nil || len(value) != 4096 || string(value) != AutoValue(key, 4096) {
+			t.Fatalf("fixture %s: %v", key, err)
+		}
+	}
+	value, err := New(0).Get(context.Background(), "Auto-0")
+	if err != nil || string(value) != "Value-for-Auto-0" {
+		t.Fatal("default source changed")
+	}
+	value, err = source.Get(context.Background(), "Tom")
+	if err != nil || string(value) != "630" {
+		t.Fatal("named demo value changed")
+	}
+}
+
+func TestSizedFixtureRejectsHostScaleAllocations(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("oversized fixture accepted")
+		}
+	}()
+	NewSized(0, MaxDiagnosticValueBytes+1)
+}

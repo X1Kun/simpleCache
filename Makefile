@@ -1,6 +1,6 @@
 .PHONY: test race build vet check test-operator fmt-check test-ci test-operator-ci compose-config generated-check k8s-render
 .PHONY: kind-up kind-smoke kind-delete
-.PHONY: validate
+.PHONY: validate perf
 
 # Prevent Go from invoking Git for automatic version stamping.
 export GOFLAGS := $(GOFLAGS) -buildvcs=false
@@ -50,6 +50,10 @@ kind-smoke:
 
 validate:
 	bash scripts/validation/run.sh local
+
+# Manual separate-process investigation; default 10s x 3 repeats per scenario.
+perf:
+	bash scripts/validation/run.sh perf
 
 kind-delete:
 	bash scripts/kind/delete.sh

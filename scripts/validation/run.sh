@@ -2,7 +2,7 @@
 set -euo pipefail
 project_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 mode="${1:-local}"
-case "$mode" in local|unit|race|operator|kind) ;; *) echo "Usage: $0 [local|unit|race|operator|kind]" >&2; exit 2;; esac
+case "$mode" in local|unit|race|operator|kind|perf) ;; *) echo "Usage: $0 [local|unit|race|operator|kind|perf]" >&2; exit 2;; esac
 cd -- "$project_root"
 export GOFLAGS="${GOFLAGS:-} -buildvcs=false"
 mkdir -p bin/reports
@@ -53,12 +53,42 @@ diagnostics() {
     -mutexprofile="$report_dir/mutex.pprof" -blockprofile="$report_dir/block.pprof" \
     ./internal/validation | tee "$report_dir/diagnostics.jsonl"
 }
+performance_build() {
+  cd "$project_root/geecache-engine" || return "$?"
+  go build -o "$report_dir/diagnostic-server" ./cmd/diagnostic-server || return "$?"
+  go build -o "$report_dir/diagnostic-bench" ./cmd/diagnostic-bench
+}
+performance() {
+  local quick=()
+  case "${PERF_QUICK:-0}" in 0) ;; 1) quick=(-quick);; *) echo "PERF_QUICK must be 0 or 1" >&2; return 2;; esac
+  "$report_dir/diagnostic-bench" -server "$report_dir/diagnostic-server" -dir "$report_dir" \
+    -seconds "${PERF_SECONDS:-10}" -repeats "${PERF_REPEATS:-3}" -workers "${PERF_WORKERS:-8}" "${quick[@]}"
+}
+performance_tops() {
+  local scenario profile
+  local sample=()
+  for scenario in warm-hot distinct-keys capacity-pressure; do
+    for profile in cpu heap allocs mutex block; do
+      sample=()
+      case "$profile" in allocs) sample=(-alloc_space);; heap) sample=(-inuse_space);; esac
+      go tool pprof -top "${sample[@]}" -nodecount=15 "$report_dir/diagnostic-server" \
+        "$report_dir/profile-$scenario-1/$profile.pprof" >"$report_dir/profile-$scenario-1/$profile-top.log" 2>&1 || return "$?"
+    done
+    # Heap retention and allocation churn are different questions.
+    go tool pprof -top -inuse_space -nodecount=15 "$report_dir/diagnostic-server" \
+      "$report_dir/profile-$scenario-1/heap.pprof" >"$report_dir/profile-$scenario-1/heap-inuse-top.log" 2>&1 || return "$?"
+  done
+}
 if [[ "$mode" == unit ]]; then
   stage engine-unit local_unit
 elif [[ "$mode" == race ]]; then
   stage engine-race local_race
 elif [[ "$mode" == operator ]]; then
   stage operator-tests operator_tests
+elif [[ "$mode" == perf ]]; then
+  stage performance-build performance_build
+  stage performance performance
+  stage performance-tops performance_tops
 elif [[ "$mode" == local ]]; then
   stage engine-race local_race
   stage diagnostics diagnostics

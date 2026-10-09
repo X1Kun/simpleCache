@@ -15,8 +15,9 @@ Focus: Go distributed-system reliability and Kubernetes platform engineering. Re
 | Adversarial validation and per-run reports | Implemented; consult each run's results |
 | Local diagnostic baseline and test-process profiles | Automated by make validate |
 | Expanded Kind continuity/resource recovery | Passed locally; each run generates independent evidence |
+| Separate-process baseline and server-only profiles | Complete; final 12-trial run passed locally |
 
-## Current: validate the expanded suite
+## Completed: validate the expanded suite
 
 Operator Services/StatefulSet/account/permissions, child watches, resources/probes/Status and conflict/default handling are implemented. Static PEERS is removed and controller tests reflect the new contract.
 
@@ -30,7 +31,42 @@ sequential reads of a roughly 1MiB working set over three passes and stayed with
 its logical byte bound. Same-key bursts performed one actual source load;
 different-key bursts stayed within the configured source concurrency limit.
 
-## Then: monitoring and diagnosis, about 1–2 days
+## Completed: isolate performance attribution
+
+`make perf` runs warm-hot, fresh distinct-key and 1MiB capacity scenarios for
+10 seconds each, three unprofiled repetitions, then separate profiled trials.
+Fresh owned server subprocesses reuse the real server/cache lifecycle. Reports
+include process identities, the server binary digest, fixed workload settings,
+warmup, percentiles, source/CPU deltas and sampled RSS/heap. Profile overhead is
+excluded from baseline aggregation. Quick mode is explicitly not a baseline.
+
+Acceptance: zero errors/wrong values; warm traffic performs no source loads;
+cold distinct requests match source loads; capacity runs evict/reload within their
+logical bound; CPU/heap/allocs/mutex/block profiles parse against the retained
+server binary; repeated baselines remain separate from profiled trials. No cache
+optimization is required without an actionable measured bottleneck.
+
+Final local run: 20261009T143114Z-perf-UiFnYx, 12 trials passed with zero request
+errors or wrong values. Unprofiled P95 medians were 0.291ms (warm hot), 101.109ms
+(fresh distinct keys), and 101.158ms (capacity pressure); each is the median of
+three 10-second runs, not a production SLO. Warm traffic performed no source
+loads, cold distinct loads matched requests, and logical cache bytes stayed
+within the configured bound during repeated eviction/reload.
+
+Investigation: the previous mixed-process profiles could not attribute client
+costs to the server. Isolated profiles now show HTTP/syscall work as the largest
+hot CPU component, with HTTP header/context work leading sampled allocations.
+The sampled cache mutex delay was about 0.239ms in an 11-second hot capture;
+this does not justify replacing the LRU lock at the tested load. Cold latency
+tracks the intentionally simulated 100ms source. Most retained heap in the
+capacity fixture belongs to the roughly 40MiB immutable source dataset, not
+the 1MiB cache. Sampling/instrumentation overhead and shared-host limits remain.
+
+Decision: retain the cache implementation and immutable value-copy contract.
+No cache-path optimization or before/after improvement is claimed. Repeat with
+representative workload constraints before choosing any subsequent optimization.
+
+## Then: monitoring and diagnosis
 
 Logical cache bytes/capacity/entries/removals and test-process CPU/heap/mutex/block profiles are implemented. Use profiles to identify a real bottleneck before optimizing. A small dynamic-scrape dashboard and private deployed-process profiling remain optional follow-up; no public pprof endpoint is added.
 

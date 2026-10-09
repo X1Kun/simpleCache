@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"github.com/X1Kun/simpleCache/geecache-engine/internal/cache"
 	"sort"
+	"strings"
 	"time"
 )
 
 const AutoKeys = 10000
+const MaxDiagnosticValueBytes = 4096
 
 type Source struct {
 	values map[string]string
@@ -17,15 +19,32 @@ type Source struct {
 }
 
 func New(delay time.Duration) *Source {
+	return NewSized(delay, 0)
+}
+
+// NewSized pads Auto values for isolated capacity diagnostics; normal nodes use New.
+func NewSized(delay time.Duration, valueBytes int) *Source {
 	if delay < 0 {
 		panic("demo delay must be nonnegative")
+	}
+	if valueBytes < 0 || valueBytes > MaxDiagnosticValueBytes {
+		panic("invalid demo value size")
 	}
 	values := map[string]string{"Tom": "630", "Jack": "589", "Sam": "567"}
 	for i := 0; i < AutoKeys; i++ {
 		key := fmt.Sprintf("Auto-%d", i)
-		values[key] = "Value-for-" + key
+		values[key] = AutoValue(key, valueBytes)
 	}
 	return &Source{values: values, delay: delay}
+}
+
+// AutoValue is deterministic so a separate load process can verify exact values.
+func AutoValue(key string, valueBytes int) string {
+	value := "Value-for-" + key
+	if valueBytes > len(value) {
+		value += strings.Repeat("v", valueBytes-len(value))
+	}
+	return value
 }
 
 func (s *Source) Keys() []string {

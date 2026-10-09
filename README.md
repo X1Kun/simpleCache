@@ -23,12 +23,14 @@ Static mode remains available for local development. Kubernetes mode uses Pod id
 ```text
 geecache-engine/
   cmd/simplecache/       CLI, signals, and startup
+  cmd/diagnostic-*/     Local fixture/driver tools, never used by deployed images
   internal/app/         Configuration, API, and HTTP lifecycle
   internal/cache/       Cache policy, request coalescing, source limits
   internal/peer/        HTTP clients/handlers and atomic routing snapshots
   internal/discovery/   Ready EndpointSlice membership
   internal/demo/        Finite read-only source
   internal/telemetry/   Per-process Prometheus registry
+  internal/diagnostics/ Separate-process manual investigation runner
 simplecache-operator/   Kubebuilder API, controller, and manifests
 .github/workflows/     Repository-level CI
 ```
@@ -74,6 +76,7 @@ Known keys return their values. Missing keys return 404; empty or oversized keys
 | SOURCE_MAX_CONCURRENCY | 32 per process |
 | API_ADDR | 0.0.0.0:9999 |
 | DISCOVERY_MODE | static; kubernetes requires POD_NAME, POD_NAMESPACE, PEER_SERVICE |
+| DEBUG_ADDR | Disabled; explicit literal loopback IP and port required |
 
 ## Kubernetes discovery
 
@@ -142,6 +145,57 @@ saved for diagnosis.
 Logical cache bytes, capacity, entries and removals are exposed as metrics.
 Logical bytes exclude Go object overhead and RSS; removals include lazy expiry.
 No throughput improvement is claimed without a comparable measured change.
+
+## Separate-process performance investigation
+
+```bash
+make perf                       # Three 10s baseline repetitions per scenario
+make perf PERF_SECONDS=20 PERF_REPEATS=3 PERF_WORKERS=8
+make perf PERF_QUICK=1 PERF_SECONDS=1 PERF_REPEATS=1 # Functional smoke only
+```
+
+This manual suite launches fresh diagnostic-server subprocesses and a separate
+diagnostic-bench load process. The fixture reuses the real cache/API/routing and
+shutdown path through app.RunWithSource, but it is not the deployed executable.
+Normal nodes still use the original immutable demo values and 100ms source delay.
+All fixture ports are dynamically allocated on loopback; no existing cluster,
+container or fixed host port is modified. Only owned subprocesses are stopped.
+
+Unprofiled trials establish the baseline; separate additional trials collect
+server-only CPU, heap, allocation-delta, mutex-delta and block-delta profiles.
+Baseline trials do not enable contention sampling. Profiles never include the
+load-generator process. Each report records both PIDs, server binary SHA256,
+workload settings, warmup, latency, errors/value mismatches, actual source-load
+deltas, CPU deltas and sampled RSS/heap. Per-run percentiles are aggregated as
+medians/ranges, not pooled samples. Think time is 1ms, source delay is 100ms and
+server GOMAXPROCS is 2; these are controlled diagnostics, not maximum QPS tests.
+
+The capacity fixture uses a 512-key x 4KiB working set against a 1MiB cache and
+warms the full working set before measurement. The source still owns 10,000
+values (roughly 40MiB), separate from cache storage; RSS is not expected to fit
+within the logical cache limit. Hot runs preload Auto-0; distinct-key runs read
+fresh keys without wrapping. TTL is one hour so expiry does not bias short runs.
+Source delay, metrics scraping and shared-host contention remain limitations.
+Fixture value size is capped at 4KiB to bound source memory; this is not the
+cache protocol's separate 1MiB value limit.
+
+Reports and the matching server binary are saved under bin/reports. Inspect
+`<run>/profile-warm-hot-1/cpu-top.log`, `allocs-top.log`, `heap-inuse-top.log`,
+`mutex-top.log` and `block-top.log`; raw profiles support deeper pprof analysis.
+The retained binary's build settings are available with `go version -m <binary>`.
+Keep non-race build settings consistent when comparing investigations.
+Allocation summaries explicitly select alloc_space and retention summaries select
+inuse_space. Profiled trials force GC before/after capture to flush warmup heap
+accounting; those GCs and sampling costs are excluded from baseline trials.
+Quick mode is prominently marked as a functional smoke, never a baseline.
+The longer suite remains manual; regular CI keeps the bounded correctness suite.
+
+For opt-in profiling of a normal local node, set DEBUG_ADDR=127.0.0.1:6060.
+CPU/heap endpoints exist only on that separate listener; wildcard, external and
+DNS host addresses are rejected, and public API/peer handlers never expose them.
+Diagnostics participate in normal graceful shutdown. The diagnostic fixture alone
+enables sampled mutex/block collection during its profiled trials. Do not enable
+CPU profiling while measuring an unprofiled baseline.
 
 ## Deadlines and consistency
 

@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"runtime"
 	"sync/atomic"
 	"time"
 
@@ -63,6 +64,27 @@ func APIHandler(group *cache.Group, ready func() bool, metrics *telemetry.Metric
 	return mux
 }
 func Run(ctx context.Context, c Config) error {
+	return RunWithSource(ctx, c, demo.New(100*time.Millisecond))
+}
+
+// Source supplies the complete immutable dataset used to initialize Bloom.
+type Source interface {
+	cache.Getter
+	Keys() []string
+}
+
+// RunWithSource shares the real server lifecycle with the isolated diagnostic fixture.
+// Normal CLI startup always uses Run and its unchanged demo source.
+func RunWithSource(ctx context.Context, c Config, source Source) error {
+	if err := validateDebugAddr(c.DebugAddr); err != nil {
+		return err
+	}
+	if c.ProfileContention && c.DebugAddr == "" {
+		return errors.New("contention profiling requires DEBUG_ADDR")
+	}
+	if source == nil {
+		return errors.New("source is required")
+	}
 	// The signal context controls shutdown; in-flight work survives the grace period.
 	work, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -71,7 +93,6 @@ func Run(ctx context.Context, c Config) error {
 	if err := router.Update(c.Members); err != nil {
 		return err
 	}
-	source := demo.New(100 * time.Millisecond)
 	metrics := telemetry.New()
 	metrics.Membership(len(router.Members()), false)
 	group := cache.NewGroup("scores", c.CacheBytes, source, cache.Options{
@@ -103,6 +124,9 @@ func Run(ctx context.Context, c Config) error {
 	if c.API {
 		servers = append(servers, &http.Server{Addr: c.APIAddr, Handler: APIHandler(group, ready, metrics), ReadHeaderTimeout: 3 * time.Second, IdleTimeout: 30 * time.Second})
 	}
+	if c.DebugAddr != "" {
+		servers = append(servers, &http.Server{Addr: c.DebugAddr, Handler: DebugHandler(), ReadHeaderTimeout: 3 * time.Second, IdleTimeout: 30 * time.Second})
+	}
 	// Bind every port before declaring readiness or starting discovery.
 	listeners := make([]net.Listener, 0, len(servers))
 	for _, server := range servers {
@@ -118,7 +142,20 @@ func Run(ctx context.Context, c Config) error {
 	if watcher != nil {
 		go watcher.Run(work)
 	}
-	slog.Info("Cache server started", "identity", c.SelfID, "discovery", c.DiscoveryMode)
+	if c.ProfileContention {
+		previous := runtime.SetMutexProfileFraction(10)
+		runtime.SetBlockProfileRate(1000000)
+		defer runtime.SetMutexProfileFraction(previous)
+		defer runtime.SetBlockProfileRate(0)
+	}
+	addresses := map[string]string{"peer": listeners[0].Addr().String()}
+	if c.API {
+		addresses["api"] = listeners[1].Addr().String()
+	}
+	if c.DebugAddr != "" {
+		addresses["debug"] = listeners[len(listeners)-1].Addr().String()
+	}
+	slog.Info("Cache server started", "identity", c.SelfID, "discovery", c.DiscoveryMode, "listeners", addresses)
 	return serve(ctx, servers, listeners, &serving)
 }
 

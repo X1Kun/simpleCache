@@ -4,8 +4,11 @@ WORKDIR /app
 # Override GOPROXY at build time when a regional mirror is needed.
 ARG GOPROXY=https://proxy.golang.org,direct
 ENV GOPROXY=${GOPROXY}
+# Cache dependencies separately from source changes.
+COPY go.mod go.sum ./
+RUN go mod download
 # Copy the module source.
-COPY . . 
+COPY . .
 # Build the geecache-server executable.
 RUN CGO_ENABLED=0 go build -buildvcs=false -o geecache-server ./cmd/simplecache
 

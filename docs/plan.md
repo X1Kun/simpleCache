@@ -10,14 +10,17 @@ Focus: Go distributed-system reliability and Kubernetes platform engineering. Re
 | Reliable peer/source reads and graceful lifecycle | Complete |
 | EndpointSlice membership and atomic snapshots | Complete; local contracts verified |
 | Root CI and English documentation | Complete; hosted runs remain separate |
-| Complete Operator/deployment integration | Next |
+| Complete Operator resource/discovery contract | Implemented; envtest/race passed |
+| Dedicated Kind deployment smoke | Prepared; live verification pending |
 | Monitoring, resource experiments, Profiling | Pending |
 
-## Next: Operator and real cluster, about 2–3 days
+## Current: complete real-cluster verification
 
-Reconcile Services, StatefulSet, cache account and discovery permissions; watch children; add resources/probes/Status; reject unrelated conflicts; preserve immutable/defaulted fields. Remove static PEERS updates and revise their current test assertions.
+Operator Services/StatefulSet/account/permissions, child watches, resources/probes/Status and conflict/default handling are implemented. Static PEERS is removed and controller tests reflect the new contract.
 
 Acceptance: envtest plus dedicated Kind startup/read; child repair; 3→5→2 membership convergence without restarting existing Pods just to publish peers. Retain app.serve, existing cancellation/boundary tests, and current CI.
+
+Envtest/race passed. Run make kind-up and make kind-smoke on the prepared isolated setup to finish live evidence. Docker/Kind execution could not complete through the current tool backend; do not treat it as passed or add Kubernetes CI until local smoke is confirmed.
 
 ## Then: monitoring and diagnosis, about 1–2 days
 

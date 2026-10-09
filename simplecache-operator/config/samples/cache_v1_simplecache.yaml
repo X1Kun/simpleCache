@@ -8,3 +8,5 @@ metadata:
 spec:
   size: 3
   image: simplecache:dev
+  cacheBytes: 67108864
+  ttlSeconds: 60

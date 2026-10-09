@@ -2,6 +2,9 @@
 FROM golang:1.25 AS builder
 ARG TARGETOS
 ARG TARGETARCH
+# Override GOPROXY at build time when a regional mirror is needed.
+ARG GOPROXY=https://proxy.golang.org,direct
+ENV GOPROXY=${GOPROXY}
 
 WORKDIR /workspace
 # Copy the Go Modules manifests
@@ -21,9 +24,9 @@ COPY . .
 # by leaving it empty we can ensure that the container and binary shipped on it will have the same platform.
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -buildvcs=false -a -o manager cmd/main.go
 
-# Use distroless as minimal base image to package the manager binary
-# Refer to https://github.com/GoogleContainerTools/distroless for more details
-FROM gcr.io/distroless/static:nonroot
+# Use the same lightweight runtime base as the engine, without requiring gcr.io.
+# The statically linked manager still runs as an unprivileged numeric user.
+FROM alpine:latest
 WORKDIR /
 COPY --from=builder /workspace/manager .
 USER 65532:65532

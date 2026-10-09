@@ -14,10 +14,16 @@ spec:
     singular: simplecache
   scope: Namespaced
   versions:
-  - name: v1
+  - additionalPrinterColumns:
+    - jsonPath: .spec.size
+      name: Desired
+      type: integer
+    - jsonPath: .status.readyReplicas
+      name: Ready
+      type: integer
+    name: v1
     schema:
       openAPIV3Schema:
-        description: SimpleCache is the Schema for the simplecaches API
         properties:
           apiVersion:
             description: |-
@@ -37,38 +43,94 @@ spec:
           metadata:
             type: object
           spec:
-            description: spec defines the desired state of SimpleCache
+            description: SimpleCacheSpec describes the desired read-cache cluster.
             properties:
-              foo:
-                description: foo is an example field of SimpleCache. Edit simplecache_types.go
-                  to remove/update
-                type: string
+              cacheBytes:
+                default: 67108864
+                format: int64
+                maximum: 134217728
+                minimum: 1048576
+                type: integer
               image:
-                description: Image is the cache container image, for example x1kun/geecache:v1.
+                minLength: 1
                 type: string
+              resources:
+                description: ResourceRequirements describes the compute resource requirements.
+                properties:
+                  claims:
+                    description: |-
+                      Claims lists the names of resources, defined in spec.resourceClaims,
+                      that are used by this container.
+
+                      This field depends on the
+                      DynamicResourceAllocation feature gate.
+
+                      This field is immutable. It can only be set for containers.
+                    items:
+                      description: ResourceClaim references one entry in PodSpec.ResourceClaims.
+                      properties:
+                        name:
+                          description: |-
+                            Name must match the name of one entry in pod.spec.resourceClaims of
+                            the Pod where this field is used. It makes that resource available
+                            inside a container.
+                          type: string
+                        request:
+                          description: |-
+                            Request is the name chosen for a request in the referenced claim.
+                            If empty, everything from the claim is made available, otherwise
+                            only the result of this request.
+                          type: string
+                      required:
+                      - name
+                      type: object
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - name
+                    x-kubernetes-list-type: map
+                  limits:
+                    additionalProperties:
+                      anyOf:
+                      - type: integer
+                      - type: string
+                      pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                      x-kubernetes-int-or-string: true
+                    description: |-
+                      Limits describes the maximum amount of compute resources allowed.
+                      More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                    type: object
+                  requests:
+                    additionalProperties:
+                      anyOf:
+                      - type: integer
+                      - type: string
+                      pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                      x-kubernetes-int-or-string: true
+                    description: |-
+                      Requests describes the minimum amount of compute resources required.
+                      If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
+                      otherwise to an implementation-defined value. Requests cannot exceed Limits.
+                      More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                    type: object
+                type: object
               size:
-                description: Size is the desired number of cache nodes.
+                default: 3
                 format: int32
+                maximum: 10
+                minimum: 1
+                type: integer
+              ttlSeconds:
+                default: 60
+                format: int32
+                maximum: 3600
                 minimum: 1
                 type: integer
             required:
             - image
-            - size
             type: object
           status:
-            description: status defines the observed state of SimpleCache
             properties:
               conditions:
-                description: |-
-                  conditions represent the current state of the SimpleCache resource.
-                  Each condition has a unique type and reflects the status of a specific aspect of the resource.
-
-                  Standard condition types include:
-                  - "Available": the resource is fully functional
-                  - "Progressing": the resource is being created or updated
-                  - "Degraded": the resource failed to reach or maintain its desired state
-
-                  The status of each condition is one of True, False, or Unknown.
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.
@@ -127,6 +189,12 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              observedGeneration:
+                format: int64
+                type: integer
+              readyReplicas:
+                format: int32
+                type: integer
             type: object
         required:
         - spec

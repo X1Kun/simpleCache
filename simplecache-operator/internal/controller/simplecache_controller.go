@@ -18,204 +18,149 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"strings"
+	"reflect"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	rbacv1 "k8s.io/api/rbac/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	cachev1 "x1kun.com/simplecache-operator/api/v1"
 )
 
-// SimpleCacheReconciler reconciles a SimpleCache object
 type SimpleCacheReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
 }
 
-const peerListEnv = "PEERS"
-
-// +kubebuilder:rbac:groups=cache.x1kun.com,resources=simplecaches,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=cache.x1kun.com,resources=simplecaches,verbs=get;list;watch
 // +kubebuilder:rbac:groups=cache.x1kun.com,resources=simplecaches/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=cache.x1kun.com,resources=simplecaches/finalizers,verbs=update
+// +kubebuilder:rbac:groups="",resources=services;serviceaccounts,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=apps,resources=statefulsets,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=roles;rolebindings,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=discovery.k8s.io,resources=endpointslices,verbs=get;list;watch
 
-// Reconcile is part of the main kubernetes reconciliation loop which aims to
-// move the current state of the cluster closer to the desired state.
-// TODO(user): Modify the Reconcile function to compare the state specified by
-// the SimpleCache object against the actual cluster state, and then
-// perform operations to make the cluster state reflect the state specified by
-// the user.
-//
-// For more details, check Reconcile and its Result here:
-// - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.23.1/pkg/reconcile
 func (r *SimpleCacheReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	// Initialize the request-scoped logger.
-	logger := log.FromContext(ctx)
-
-	// Fetch the SimpleCache resource from the API server.
-	var cacheResource cachev1.SimpleCache
-	if err := r.Get(ctx, req.NamespacedName, &cacheResource); err != nil {
-		// Ignore a deleted or missing resource.
+	var cr cachev1.SimpleCache
+	if err := r.Get(ctx, req.NamespacedName, &cr); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
-
-	// Record the desired cluster configuration.
-	logger.Info("Reconciling SimpleCache",
-		"clusterName", cacheResource.Name,
-		"desiredReplicas", cacheResource.Spec.Size,
-		"image", cacheResource.Spec.Image,
-	)
-
-	// Build the static peer list from the desired replica count.
-	// For three replicas, use the stable Pod DNS names for ordinals 0 through 2.
-	var peers []string
-	svcName := cacheResource.Name + "-svc" // Name of the governing headless Service.
-	for i := int32(0); i < cacheResource.Spec.Size; i++ {
-		peerURL := fmt.Sprintf("http://%s-%d.%s.%s.svc.cluster.local:8001",
-			cacheResource.Name, i, svcName, cacheResource.Namespace)
-		peers = append(peers, peerURL)
-	}
-	peersStr := strings.Join(peers, ",")
-
-	labels := map[string]string{"app": cacheResource.Name}
-
-	// Construct the desired headless Service.
-	svc := &corev1.Service{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      svcName,
-			Namespace: cacheResource.Namespace,
-		},
-		Spec: corev1.ServiceSpec{
-			// Headless Service.
-			ClusterIP: "None",
-			Selector:  labels,
-			Ports: []corev1.ServicePort{
-				{Name: "peer", Port: 8001},
-				{Name: "api", Port: 9999},
-			},
-		},
-	}
-	// Assign the SimpleCache resource as the Service owner.
-	if err := ctrl.SetControllerReference(&cacheResource, svc, r.Scheme); err != nil {
-		return ctrl.Result{}, err
-	}
-
-	// Create the governing Service if it does not exist.
-	foundSvc := &corev1.Service{}
-	err := r.Get(ctx, types.NamespacedName{Name: svc.Name, Namespace: svc.Namespace}, foundSvc)
-	if err != nil && apierrors.IsNotFound(err) {
-		logger.Info("Creating headless Service", "Name", svc.Name)
-		if err = r.Create(ctx, svc); err != nil {
-			return ctrl.Result{}, err
-		}
-	}
-
-	// Construct the desired StatefulSet.
-	sts := &appsv1.StatefulSet{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      cacheResource.Name,
-			Namespace: cacheResource.Namespace,
-		},
-		Spec: appsv1.StatefulSetSpec{
-			Replicas: &cacheResource.Spec.Size,
-			// Use the governing headless Service.
-			ServiceName: svcName,
-			Selector:    &metav1.LabelSelector{MatchLabels: labels},
-			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{Labels: labels},
-				Spec: corev1.PodSpec{
-					Containers: []corev1.Container{{
-						Name:    "cache",
-						Image:   cacheResource.Spec.Image,
-						Command: []string{"./geecache-server", "-port=8001", "-api=1"},
-						Env: []corev1.EnvVar{
-							{
-								Name: "POD_NAME",
-								ValueFrom: &corev1.EnvVarSource{
-									FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.name"},
-								},
-							},
-							{
-								Name:  "SELF_ADDR",
-								Value: fmt.Sprintf("http://$(POD_NAME).%s.%s.svc.cluster.local:8001", svcName, cacheResource.Namespace),
-							},
-							{
-								Name:  peerListEnv,
-								Value: peersStr, // Static peer list derived from the replica count.
-							},
-						},
-					}},
-				},
-			},
-		},
-	}
-
-	// Assign ownership so Kubernetes can garbage-collect the StatefulSet when the CR is deleted.
-	if err = ctrl.SetControllerReference(&cacheResource, sts, r.Scheme); err != nil {
-		return ctrl.Result{}, err
-	}
-
-	// Look up the current StatefulSet.
-	foundSts := &appsv1.StatefulSet{}
-	err = r.Get(ctx, types.NamespacedName{Name: sts.Name, Namespace: sts.Namespace}, foundSts)
-
-	if err != nil && apierrors.IsNotFound(err) {
-		// Create the StatefulSet when missing.
-		logger.Info("Creating StatefulSet", "Name", sts.Name)
-		err = r.Create(ctx, sts)
-		if err != nil {
-			return ctrl.Result{}, err
-		}
-		// Creation completed.
+	if !cr.DeletionTimestamp.IsZero() {
 		return ctrl.Result{}, nil
-	} else if err != nil {
-		// Propagate API or transport errors.
-		return ctrl.Result{}, err
 	}
-
-	var existingPeers string
-	for _, env := range foundSts.Spec.Template.Spec.Containers[0].Env {
-		if env.Name == peerListEnv {
-			existingPeers = env.Value
-			break
+	desired := cr.DeepCopy()
+	defaults(desired)
+	if err := validateSpec(desired); err != nil {
+		if statusErr := r.setStatus(ctx, &cr, 0, metav1.ConditionFalse, "InvalidSpec", err.Error()); statusErr != nil {
+			return ctrl.Result{}, statusErr
 		}
+		return ctrl.Result{}, nil
 	}
-	existingImage := foundSts.Spec.Template.Spec.Containers[0].Image
-
-	// Compare the current StatefulSet with the desired configuration.
-	if *foundSts.Spec.Replicas != cacheResource.Spec.Size || existingPeers != peersStr || existingImage != cacheResource.Spec.Image {
-		logger.Info("Updating StatefulSet configuration", "currentImage", existingImage, "desiredImage", cacheResource.Spec.Image)
-		// Update the replica count.
-		foundSts.Spec.Replicas = &cacheResource.Spec.Size
-		// Update the cache image.
-		foundSts.Spec.Template.Spec.Containers[0].Image = cacheResource.Spec.Image
-		// Update the static PEERS environment variable.
-		for i, env := range foundSts.Spec.Template.Spec.Containers[0].Env {
-			if env.Name == peerListEnv {
-				// Use the freshly generated peer list.
-				foundSts.Spec.Template.Spec.Containers[0].Env[i].Value = peersStr
-				break
+	objects := []client.Object{account(desired), discoveryRole(desired), discoveryBinding(desired), peerService(desired), apiService(desired), statefulSet(desired)}
+	for _, wanted := range objects {
+		if err := r.ensure(ctx, &cr, wanted); err != nil {
+			reason := "ReconcileFailed"
+			var conflict *ownershipConflict
+			if errors.As(err, &conflict) {
+				reason = "ResourceConflict"
 			}
-		}
-		err = r.Update(ctx, foundSts)
-		if err != nil {
+			if statusErr := r.setStatus(ctx, &cr, 0, metav1.ConditionFalse, reason, err.Error()); statusErr != nil {
+				return ctrl.Result{}, statusErr
+			}
+			log.FromContext(ctx).Error(err, "Could not reconcile cache resource", "name", wanted.GetName())
 			return ctrl.Result{}, err
 		}
 	}
-	// Wait for the next reconciliation event.
-	return ctrl.Result{}, nil
+	var sts appsv1.StatefulSet
+	if err := r.Get(ctx, req.NamespacedName, &sts); err != nil {
+		return ctrl.Result{}, err
+	}
+	condition := metav1.Condition{Type: "Ready", Status: metav1.ConditionFalse, Reason: "Reconciling",
+		Message: "Waiting for StatefulSet rollout", ObservedGeneration: cr.Generation,
+	}
+	if sts.Status.ObservedGeneration >= sts.Generation && sts.Status.ReadyReplicas == desired.Spec.Size && sts.Status.UpdatedReplicas == desired.Spec.Size && sts.Status.CurrentRevision == sts.Status.UpdateRevision {
+		condition.Status = metav1.ConditionTrue
+		condition.Reason = "Ready"
+		condition.Message = "All desired cache replicas are ready"
+	}
+	return ctrl.Result{}, r.setStatus(ctx, &cr, sts.Status.ReadyReplicas, condition.Status, condition.Reason, condition.Message)
 }
 
-// SetupWithManager sets up the controller with the Manager.
-func (r *SimpleCacheReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	return ctrl.NewControllerManagedBy(mgr).
-		For(&cachev1.SimpleCache{}).
-		Named("simplecache").
-		Complete(r)
+func (r *SimpleCacheReconciler) setStatus(ctx context.Context, cr *cachev1.SimpleCache, ready int32, status metav1.ConditionStatus, reason, message string) error {
+	before := cr.DeepCopy()
+	cr.Status.ObservedGeneration = cr.Generation
+	cr.Status.ReadyReplicas = ready
+	meta.SetStatusCondition(&cr.Status.Conditions, metav1.Condition{Type: "Ready", Status: status, Reason: reason, Message: message, ObservedGeneration: cr.Generation})
+	if !reflect.DeepEqual(before.Status, cr.Status) {
+		return r.Status().Patch(ctx, cr, client.MergeFrom(before))
+	}
+	return nil
+}
+
+type ownershipConflict struct{ message string }
+
+func (e *ownershipConflict) Error() string { return e.message }
+
+// ensure preserves allocated Service fields and rejects unrelated name collisions.
+func (r *SimpleCacheReconciler) ensure(ctx context.Context, owner *cachev1.SimpleCache, wanted client.Object) error {
+	actual := wanted.DeepCopyObject().(client.Object)
+	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, actual, func() error {
+		if actual.GetResourceVersion() != "" && !metav1.IsControlledBy(actual, owner) {
+			return &ownershipConflict{message: fmt.Sprintf("%T %s is not owned by this SimpleCache", actual, actual.GetName())}
+		}
+		if err := ctrl.SetControllerReference(owner, actual, r.Scheme); err != nil {
+			return err
+		}
+		switch current := actual.(type) {
+		case *corev1.Service:
+			spec := wanted.(*corev1.Service).Spec
+			if spec.ClusterIP == corev1.ClusterIPNone && current.Spec.ClusterIP != "" && current.Spec.ClusterIP != corev1.ClusterIPNone {
+				return fmt.Errorf("existing Service is not headless")
+			}
+			if spec.ClusterIP == corev1.ClusterIPNone {
+				current.Spec.ClusterIP = corev1.ClusterIPNone
+			}
+			current.Spec.Selector = spec.Selector
+			current.Spec.Ports = spec.Ports
+			current.Spec.Type = spec.Type
+			current.Spec.PublishNotReadyAddresses = false
+		case *corev1.ServiceAccount:
+		case *rbacv1.Role:
+			current.Rules = wanted.(*rbacv1.Role).Rules
+		case *rbacv1.RoleBinding:
+			binding := wanted.(*rbacv1.RoleBinding)
+			if current.GetResourceVersion() != "" && current.RoleRef != binding.RoleRef {
+				return fmt.Errorf("RoleBinding roleRef is immutable")
+			}
+			current.RoleRef = binding.RoleRef
+			current.Subjects = binding.Subjects
+		case *appsv1.StatefulSet:
+			spec := wanted.(*appsv1.StatefulSet).Spec
+			if current.GetResourceVersion() == "" {
+				current.Spec = spec
+			} else {
+				// Immutable serviceName/selector/management policy are preserved on existing clusters.
+				if current.Spec.ServiceName != spec.ServiceName || !reflect.DeepEqual(current.Spec.Selector, spec.Selector) {
+					return fmt.Errorf("StatefulSet immutable identity does not match")
+				}
+				current.Spec.Replicas = spec.Replicas
+				mergeTemplate(&current.Spec.Template, &spec.Template)
+			}
+		}
+		return nil
+	})
+	return err
+}
+func (r *SimpleCacheReconciler) SetupWithManager(manager ctrl.Manager) error {
+	return ctrl.NewControllerManagedBy(manager).For(&cachev1.SimpleCache{}).
+		Owns(&appsv1.StatefulSet{}).Owns(&corev1.Service{}).Owns(&corev1.ServiceAccount{}).
+		Owns(&rbacv1.Role{}).Owns(&rbacv1.RoleBinding{}).Named("simplecache").Complete(r)
 }

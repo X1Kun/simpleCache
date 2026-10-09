@@ -5,9 +5,10 @@ metadata:
   name: manager-role
 rules:
 - apiGroups:
-  - cache.x1kun.com
+  - ""
   resources:
-  - simplecaches
+  - serviceaccounts
+  - services
   verbs:
   - create
   - delete
@@ -15,6 +16,26 @@ rules:
   - list
   - patch
   - update
+  - watch
+- apiGroups:
+  - apps
+  resources:
+  - statefulsets
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - cache.x1kun.com
+  resources:
+  - simplecaches
+  verbs:
+  - get
+  - list
   - watch
 - apiGroups:
   - cache.x1kun.com
@@ -30,3 +51,24 @@ rules:
   - get
   - patch
   - update
+- apiGroups:
+  - discovery.k8s.io
+  resources:
+  - endpointslices
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - rbac.authorization.k8s.io
+  resources:
+  - rolebindings
+  - roles
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch

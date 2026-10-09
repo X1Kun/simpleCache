@@ -1,6 +1,6 @@
 # SimpleCache
 
-A read-only distributed cache written in Go, with a Kubernetes Operator. The cache engine supports reliable reads, atomic routing snapshots, and static or EndpointSlice membership. The remaining Operator integration is planned.
+A read-only distributed cache written in Go, with a Kubernetes Operator. The engine supports reliable reads and atomic EndpointSlice membership; the Operator provides declarative resources, discovery permissions, probes, and rollout Status. Real Kind deployment verification is pending.
 
 See [Design](docs/design.md) for architecture and constraints, and [Plan](docs/plan.md) for remaining work.
 
@@ -14,8 +14,9 @@ See [Design](docs/design.md) for architecture and constraints, and [Plan](docs/p
 - Bounded peer requests, local source fallback, and typed peer errors.
 - A shared per-process source concurrency limit; queueing counts toward the source deadline.
 - Health/readiness endpoints, request metrics, and graceful shutdown.
+- Idempotent Operator reconciliation, child-resource watches, replica-only scaling, and conflict/rollout conditions.
 
-Static mode remains available for local development. Kubernetes mode requires explicit Pod identity, a peer Service, and namespace EndpointSlice read permissions. The existing Operator still broadcasts static PEERS and does not yet supply the new discovery contract; real-cluster deployment is not claimed as verified.
+Static mode remains available for local development. Kubernetes mode uses Pod identity, the governing peer Service, and a cache-specific ServiceAccount with namespace EndpointSlice permissions. The Operator supplies this contract without broadcasting PEERS in Pod templates.
 
 ## Layout
 
@@ -79,7 +80,24 @@ The informer selects every IPv4 EndpointSlice for PEER_SERVICE in POD_NAMESPACE,
 
 Readiness requires a first successful informer sync and valid publication, but does not wait for this Pod to appear in its own endpoints. An empty healthy set uses the local source. Discovery failures retain the last valid view; stale peer calls remain bounded and can fall back.
 
-The process needs namespace get/list/watch permissions for discovery.k8s.io/endpointslices. Do not set Kubernetes mode without completing its service/account/permission wiring. The next Operator pass supplies these resources and removes static PEERS from Pod templates.
+The process needs namespace get/list/watch permissions for discovery.k8s.io/endpointslices. The Operator reconciles those permissions, a headless peer Service, an API ClusterIP Service, and the StatefulSet. Configure size/image/cacheBytes/ttlSeconds/resources through the CR. Scaling changes only replicas; image or cache settings can roll Pods. Allocated and immutable Kubernetes fields are preserved.
+
+## Isolated Kubernetes smoke
+
+```bash
+make kind-up     # Build/load local images and deploy to simplecache-stage4
+make kind-smoke  # Read, discovery RBAC, 3→5→2, Pod UID stability and child/Pod repair
+make kind-delete # Explicit cleanup of that dedicated cluster only
+```
+
+If the default Go module proxy is unreachable during image builds, run
+`GOPROXY=https://goproxy.cn,direct make kind-up`. The script forwards GOPROXY
+to both Docker builds; setting it only in the host's Go configuration does not
+configure the build containers. Module checksum verification remains enabled.
+
+The scripts use bin/kind/kubeconfig and an explicit context, without changing the user's normal kubeconfig. They do not touch dev-cluster or orion-live. Repeated kind-up restarts only this project's test workloads to load rebuilt dev tags. This setup uses one physical host and does not prove multi-machine availability.
+
+These commands are prepared and their manifests/shell syntax are checked. Local Docker/Kind execution was interrupted by the tool backend, so a successful live deployment is not yet recorded.
 
 ## Deadlines and consistency
 

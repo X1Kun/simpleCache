@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: simplecache-test
+  labels:
+    app.kubernetes.io/part-of: simplecache
+---
+apiVersion: cache.x1kun.com/v1
+kind: SimpleCache
+metadata:
+  name: simplecache
+  namespace: simplecache-test
+spec:
+  size: 3
+  image: simplecache-engine:stage4
+  cacheBytes: 67108864
+  ttlSeconds: 60

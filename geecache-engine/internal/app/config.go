@@ -20,6 +20,8 @@ type Config struct {
 	TTL                                      time.Duration
 	SourceConcurrency                        int
 	Members                                  []peer.Member
+	DebugAddr                                string
+	ProfileContention                        bool
 }
 
 func FromEnv(port int, api bool) (Config, error) {
@@ -38,6 +40,10 @@ func FromEnv(port int, api bool) (Config, error) {
 	}
 	if _, _, err := net.SplitHostPort(c.APIAddr); err != nil {
 		return c, fmt.Errorf("invalid API_ADDR: %w", err)
+	}
+	c.DebugAddr = os.Getenv("DEBUG_ADDR")
+	if err := validateDebugAddr(c.DebugAddr); err != nil {
+		return c, err
 	}
 	for _, item := range []struct {
 		name  string
@@ -97,6 +103,20 @@ func FromEnv(port int, api bool) (Config, error) {
 		return c, fmt.Errorf("unsupported DISCOVERY_MODE %q", c.DiscoveryMode)
 	}
 	return c, nil
+}
+
+// Debug listeners accept literal loopback addresses only, never DNS or wildcards.
+func validateDebugAddr(address string) error {
+	if address == "" {
+		return nil
+	}
+	host, port, err := net.SplitHostPort(address)
+	number, parseErr := strconv.Atoi(port)
+	ip := net.ParseIP(host)
+	if err != nil || parseErr != nil || number < 0 || number > 65535 || ip == nil || !ip.IsLoopback() {
+		return fmt.Errorf("DEBUG_ADDR requires a literal loopback IP and port")
+	}
+	return nil
 }
 func staticAddress(raw string) (string, error) {
 	u, err := url.Parse(raw)

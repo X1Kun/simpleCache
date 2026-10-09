@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/X1Kun/simpleCache/geecache-engine/internal/diagnostics"
 )
 
 type Stage struct {
@@ -27,14 +29,15 @@ type Stage struct {
 	Evidence    []json.RawMessage `json:"evidence,omitempty"`
 }
 type Report struct {
-	Status       string   `json:"status"`
-	GeneratedAt  string   `json:"generated_at"`
-	RunDirectory string   `json:"run_directory"`
-	GoVersion    string   `json:"go_version"`
-	Platform     string   `json:"platform"`
-	CPUs         int      `json:"logical_cpus"`
-	Stages       []Stage  `json:"stages"`
-	Artifacts    []string `json:"artifacts"`
+	Status       string               `json:"status"`
+	GeneratedAt  string               `json:"generated_at"`
+	RunDirectory string               `json:"run_directory"`
+	GoVersion    string               `json:"go_version"`
+	Platform     string               `json:"platform"`
+	CPUs         int                  `json:"logical_cpus"`
+	Stages       []Stage              `json:"stages"`
+	Artifacts    []string             `json:"artifacts"`
+	Performance  *diagnostics.Summary `json:"performance,omitempty"`
 }
 
 func parseEvents(path string, s *Stage) error {
@@ -121,6 +124,9 @@ func Generate(dir string) (Report, error) {
 		} else if err := parseEvents(filepath.Join(dir, s.Name+".jsonl"), &s); err != nil {
 			s.Failures = append(s.Failures, "cannot parse test evidence: "+err.Error())
 		}
+		if s.Name == "performance" {
+			r.Performance = collectPerformance(dir, &s)
+		}
 		if s.Name == "kind-smoke" {
 			hasProbe := false
 			if data, e := os.ReadFile(filepath.Join(dir, "probe.json")); e == nil {
@@ -180,6 +186,9 @@ func Generate(dir string) (Report, error) {
 		}
 		fmt.Fprintf(&md, "| %s | %d | %d | %s | %s | %s | %s | %s |\n", s.Name, s.ExitCode, s.Seconds, source, countText(s.Passed), countText(s.Failed), countText(s.Skipped), countText(s.Pending))
 	}
+	if r.Performance != nil {
+		renderPerformance(&md, *r.Performance)
+	}
 	for _, s := range r.Stages {
 		fmt.Fprintf(&md, "\n## %s evidence\n\nRaw log: [%s.log](%s.log).\n\n", s.Name, s.Name, s.Name)
 		for _, failure := range s.Failures {
@@ -197,7 +206,7 @@ func Generate(dir string) (Report, error) {
 			fmt.Fprintf(&md, "```json\n%s\n```\n\n", pretty.String())
 		}
 	}
-	md.WriteString("## Interpretation\n\nLocal diagnostics use loopback HTTP and synthetic sources. Profiles cover the non-race scenario test process, not deployed Pods. Source limits and SingleFlight are per process. Logical cache bytes are not RSS; removals include expiry. Reported timings are observations, not fixed performance gates. Kind uses one host and does not prove multi-machine availability. Aborted or interrupted stages are failures, not passes.\n")
+	md.WriteString("## Interpretation\n\nLegacy local diagnostic profiles cover the combined scenario test process. Separate-process performance runs profile only the named server subprocess; their unprofiled baseline and profiled trials are reported separately. Both use loopback and synthetic sources, not deployed Pods. Source limits and SingleFlight are per process. Logical cache bytes are not RSS; removals include expiry. Reported timings are observations, not fixed performance gates. Kind uses one host and does not prove multi-machine availability. Aborted or interrupted stages are failures, not passes. N/A/null counts mean uncollected, not zero.\n")
 	return r, os.WriteFile(filepath.Join(dir, "report.md"), []byte(md.String()), 0644)
 }
 

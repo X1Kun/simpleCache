@@ -1,6 +1,6 @@
 # SimpleCache design
 
-Current state: reliable reads, static/EndpointSlice membership, and atomic routing snapshots are implemented. The Operator still uses its original static-peer contract. See [the plan](plan.md) for remaining work and [README](../README.md) for commands and CI.
+Current state: reliable reads, static/EndpointSlice membership, atomic snapshots, and the Operator discovery/resource contract are implemented. API-server/race tests validate the controller; real Kind integration remains unverified. See [the plan](plan.md) and [README](../README.md).
 
 ## Responsibilities
 
@@ -64,9 +64,9 @@ All listeners bind before readiness. Shutdown clears readiness, drains HTTP requ
 
 Metrics distinguish API/peer local lookups, actual peer requests, actual Getter calls, source-slot waits/inflight, Bloom rejection, fallback, and members/publications/errors. Waiters are not extra source loads. Labels do not include keys, arbitrary URLs, or error text.
 
-## Operator integration still required
+## Operator integration
 
-The current controller creates a StatefulSet/headless Service and derives static PEERS from size. The next pass must:
+The controller now reconciles the dynamic discovery contract:
 
 - Manage peer/API Services, StatefulSet, cache account, and namespace discovery Role/Binding.
 - Handle conflicts/errors, repair managed drift, and watch children.
@@ -75,13 +75,15 @@ The current controller creates a StatefulSet/headless Service and derives static
 - Remove PEERS from the template so scaling changes replicas only.
 - Regenerate CRD/RBAC/DeepCopy and update envtest assertions.
 
-Ready Status describes observed Kubernetes rollout, not simultaneous ring agreement. No external resources require a custom finalizer. Keep manual CR scaling until there is one authoritative autoscaling interface.
+Ready Status describes observed Kubernetes rollout, not simultaneous ring agreement. InvalidSpec, ResourceConflict and ReconcileFailed expose failures. Status patches occur only on actual changes. No external resources require a custom finalizer. Keep manual CR scaling until there is one authoritative autoscaling interface.
+
+New StatefulSets use Parallel management; existing compatible immutable policy/identity fields are preserved. Resource defaults respect explicitly smaller limits, and invalid request/limit combinations prevent workload creation. Managed Pod fields are merged without erasing API defaults or unrelated fields. Static PEERS and SELF_ADDR are removed from the cache environment.
 
 ## Boundaries and evidence
 
 The demo source is read-only and identical across nodes, with 100ms simulated latency. There is no write API, replication, persistence, active migration, or strong consistency. SingleFlight and source limits are process-local. Membership converges eventually.
 
-Unit/race tests and fake discovery prove local contracts. Envtest proves current API resource behavior, not deployed permissions or Pod networking. Real isolated-cluster smoke, monitoring, resource experiments, and Profiling remain pending.
+Unit/race tests and fake discovery prove local contracts. Envtest additionally checks real API defaulting, allocated-field preservation, Status, conflicts, scaling without template changes, and Manager child-watch repair. It does not prove deployed permissions or Pod networking. Dedicated Kind scripts are prepared; their live run, monitoring, resource experiments, and Profiling remain pending.
 
 No throughput, GPU, scheduler-plugin, or production-availability claim follows from these tests. Keep advanced scheduling and AI workloads as separate follow-up work.
 

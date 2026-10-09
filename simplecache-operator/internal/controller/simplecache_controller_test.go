@@ -18,122 +18,226 @@ package controller
 
 import (
 	"context"
-	"strings"
+	"reflect"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/types"
-	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/reconcile"
-
+	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-
+	"k8s.io/apimachinery/pkg/types"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	cachev1 "x1kun.com/simplecache-operator/api/v1"
 )
 
-var _ = Describe("SimpleCache Controller", func() {
-	Context("When reconciling a resource", func() {
-		const resourceName = "test-resource"
+const testNamespace = "default"
 
-		ctx := context.Background()
+var _ = Describe("SimpleCache controller contract", func() {
+	const resourceName = "test-resource"
+	key := types.NamespacedName{Name: resourceName, Namespace: testNamespace}
+	ctx := context.Background()
+	var cr *cachev1.SimpleCache
+	var r *SimpleCacheReconciler
+	var stopManager context.CancelFunc
+	var managerDone chan error
+	request := reconcile.Request{NamespacedName: key}
+	getCR := func() { Expect(k8sClient.Get(ctx, key, cr)).To(Succeed()) }
+	reconcileNow := func() { _, err := r.Reconcile(ctx, request); Expect(err).NotTo(HaveOccurred()) }
 
-		typeNamespacedName := types.NamespacedName{
-			Name:      resourceName,
-			Namespace: "default", // TODO(user):Modify as needed
+	BeforeEach(func() {
+		cr = &cachev1.SimpleCache{ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: testNamespace}, Spec: cachev1.SimpleCacheSpec{Size: 3, Image: "simplecache:envtest"}}
+		Expect(k8sClient.Create(ctx, cr)).To(Succeed())
+		getCR()
+		r = &SimpleCacheReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
+	})
+	AfterEach(func() {
+		if stopManager != nil {
+			stopManager()
+			Eventually(managerDone, 5*time.Second).Should(Receive(Succeed()))
+			stopManager = nil
 		}
-		simplecache := &cachev1.SimpleCache{}
+		// Envtest has no garbage collector, so remove every child explicitly.
+		children := []client.Object{
+			&appsv1.StatefulSet{ObjectMeta: metadata(cr, resourceName)},
+			&corev1.Service{ObjectMeta: metadata(cr, resourceName+"-svc")},
+			&corev1.Service{ObjectMeta: metadata(cr, resourceName+"-api")},
+			&corev1.ServiceAccount{ObjectMeta: metadata(cr, resourceName+"-cache")},
+			&rbacv1.RoleBinding{ObjectMeta: metadata(cr, resourceName+"-discovery")},
+			&rbacv1.Role{ObjectMeta: metadata(cr, resourceName+"-discovery")},
+		}
+		for _, obj := range children {
+			Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, obj))).To(Succeed())
+		}
+		getCR()
+		Expect(k8sClient.Delete(ctx, cr)).To(Succeed())
+	})
 
-		BeforeEach(func() {
-			By("creating the custom resource for the Kind SimpleCache")
-			err := k8sClient.Get(ctx, typeNamespacedName, simplecache)
-			if err != nil && errors.IsNotFound(err) {
-				resource := &cachev1.SimpleCache{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      resourceName,
-						Namespace: "default",
-					},
-					Spec: cachev1.SimpleCacheSpec{Size: 3, Image: "simplecache:envtest"},
-				}
-				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+	It("reconciles discovery resources, status and replica-only scaling", func() {
+		reconcileNow()
+		var headless, api corev1.Service
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: resourceName + "-svc", Namespace: testNamespace}, &headless)).To(Succeed())
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: resourceName + "-api", Namespace: testNamespace}, &api)).To(Succeed())
+		Expect(headless.Spec.ClusterIP).To(Equal(corev1.ClusterIPNone))
+		Expect(headless.Spec.PublishNotReadyAddresses).To(BeFalse())
+		Expect(headless.Spec.Ports).To(HaveLen(1))
+		Expect(headless.Spec.Ports[0].Name).To(Equal("peer"))
+		Expect(api.Spec.ClusterIP).NotTo(BeEmpty())
+		Expect(metav1.IsControlledBy(&api, cr)).To(BeTrue())
+		allocatedIP := api.Spec.ClusterIP
+
+		var account corev1.ServiceAccount
+		var role rbacv1.Role
+		var binding rbacv1.RoleBinding
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: resourceName + "-cache", Namespace: testNamespace}, &account)).To(Succeed())
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: resourceName + "-discovery", Namespace: testNamespace}, &role)).To(Succeed())
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: resourceName + "-discovery", Namespace: testNamespace}, &binding)).To(Succeed())
+		Expect(role.Rules).To(Equal(discoveryRole(cr).Rules))
+		Expect(binding.Subjects[0].Name).To(Equal(account.Name))
+		Expect(metav1.IsControlledBy(&role, cr)).To(BeTrue())
+
+		var sts appsv1.StatefulSet
+		Expect(k8sClient.Get(ctx, key, &sts)).To(Succeed())
+		Expect(sts.Spec.PodManagementPolicy).To(Equal(appsv1.ParallelPodManagement))
+		container := sts.Spec.Template.Spec.Containers[0]
+		Expect(sts.Spec.Template.Spec.ServiceAccountName).To(Equal(account.Name))
+		Expect(container.ReadinessProbe.HTTPGet.Path).To(Equal("/readyz"))
+		Expect(container.StartupProbe.HTTPGet.Path).To(Equal("/healthz"))
+		environment := map[string]string{}
+		for _, env := range container.Env {
+			environment[env.Name] = env.Value
+		}
+		Expect(environment).NotTo(HaveKey("PEERS"))
+		Expect(environment).NotTo(HaveKey("SELF_ADDR"))
+		Expect(environment["DISCOVERY_MODE"]).To(Equal("kubernetes"))
+		Expect(environment["PEER_SERVICE"]).To(Equal(headless.Name))
+
+		By("reporting a progressing rollout without changing resources on repetition")
+		getCR()
+		Expect(meta.FindStatusCondition(cr.Status.Conditions, "Ready").Status).To(Equal(metav1.ConditionFalse))
+		version, statusVersion := sts.ResourceVersion, cr.ResourceVersion
+		reconcileNow()
+		Expect(k8sClient.Get(ctx, key, &sts)).To(Succeed())
+		getCR()
+		Expect(sts.ResourceVersion).To(Equal(version))
+		Expect(cr.ResourceVersion).To(Equal(statusVersion))
+
+		By("reflecting an observed StatefulSet rollout")
+		sts.Status.ObservedGeneration = sts.Generation
+		sts.Status.Replicas = 3
+		sts.Status.CurrentReplicas = 3
+		sts.Status.ReadyReplicas = 3
+		sts.Status.UpdatedReplicas = 3
+		sts.Status.CurrentRevision = "revision-1"
+		sts.Status.UpdateRevision = "revision-1"
+		Expect(k8sClient.Status().Update(ctx, &sts)).To(Succeed())
+		reconcileNow()
+		getCR()
+		Expect(meta.IsStatusConditionTrue(cr.Status.Conditions, "Ready")).To(BeTrue())
+		Expect(cr.Status.ObservedGeneration).To(Equal(cr.Generation))
+
+		original := sts.Spec.Template.DeepCopy()
+		for _, size := range []int32{5, 2} {
+			cr.Spec.Size = size
+			Expect(k8sClient.Update(ctx, cr)).To(Succeed())
+			reconcileNow()
+			Expect(k8sClient.Get(ctx, key, &sts)).To(Succeed())
+			Expect(*sts.Spec.Replicas).To(Equal(size))
+			Expect(reflect.DeepEqual(original, &sts.Spec.Template)).To(BeTrue())
+			getCR()
+			Expect(meta.IsStatusConditionTrue(cr.Status.Conditions, "Ready")).To(BeFalse())
+		}
+
+		By("repairing Service drift while preserving its allocated address")
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: api.Name, Namespace: testNamespace}, &api)).To(Succeed())
+		api.Spec.Selector = map[string]string{"wrong": "selector"}
+		Expect(k8sClient.Update(ctx, &api)).To(Succeed())
+		reconcileNow()
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: api.Name, Namespace: testNamespace}, &api)).To(Succeed())
+		Expect(api.Spec.ClusterIP).To(Equal(allocatedIP))
+		Expect(api.Spec.Selector).To(Equal(labels(cr)))
+		Expect(k8sClient.Delete(ctx, &api)).To(Succeed())
+		reconcileNow()
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: api.Name, Namespace: testNamespace}, &api)).To(Succeed())
+
+		By("rolling the image when desired configuration changes")
+		getCR()
+		cr.Spec.Image = "simplecache:envtest-v2"
+		Expect(k8sClient.Update(ctx, cr)).To(Succeed())
+		reconcileNow()
+		Expect(k8sClient.Get(ctx, key, &sts)).To(Succeed())
+		Expect(sts.Spec.Template.Spec.Containers[0].Image).To(Equal(cr.Spec.Image))
+	})
+
+	It("rejects unrelated same-name resources and reports the conflict", func() {
+		foreign := &corev1.Service{ObjectMeta: metadata(cr, resourceName+"-svc"), Spec: corev1.ServiceSpec{Ports: []corev1.ServicePort{{Port: 8001}}}}
+		Expect(k8sClient.Create(ctx, foreign)).To(Succeed())
+		original := foreign.DeepCopy()
+		_, err := r.Reconcile(ctx, request)
+		Expect(err).To(HaveOccurred())
+		getCR()
+		Expect(meta.FindStatusCondition(cr.Status.Conditions, "Ready").Reason).To(Equal("ResourceConflict"))
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: foreign.Name, Namespace: testNamespace}, foreign)).To(Succeed())
+		Expect(foreign.ResourceVersion).To(Equal(original.ResourceVersion))
+		Expect(foreign.OwnerReferences).To(BeEmpty())
+	})
+
+	It("uses compatible defaults below an explicitly smaller memory limit", func() {
+		cr.Spec.Resources = corev1.ResourceRequirements{Limits: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("64Mi")}}
+		Expect(k8sClient.Update(ctx, cr)).To(Succeed())
+		reconcileNow()
+		var sts appsv1.StatefulSet
+		Expect(k8sClient.Get(ctx, key, &sts)).To(Succeed())
+		q := sts.Spec.Template.Spec.Containers[0].Resources.Requests[corev1.ResourceMemory]
+		Expect(q.Cmp(resource.MustParse("64Mi"))).To(Equal(0))
+	})
+
+	It("ignores a missing primary resource", func() {
+		_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: "missing-cache", Namespace: testNamespace}})
+		Expect(err).NotTo(HaveOccurred())
+		var sts appsv1.StatefulSet
+		Expect(errors.IsNotFound(k8sClient.Get(ctx, types.NamespacedName{Name: "missing-cache", Namespace: testNamespace}, &sts))).To(BeTrue())
+	})
+
+	It("reports invalid resource budgets without creating a workload", func() {
+		cr.Spec.Resources = corev1.ResourceRequirements{
+			Requests: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("128Mi")},
+			Limits:   corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("64Mi")},
+		}
+		Expect(k8sClient.Update(ctx, cr)).To(Succeed())
+		reconcileNow()
+		getCR()
+		Expect(meta.FindStatusCondition(cr.Status.Conditions, "Ready").Reason).To(Equal("InvalidSpec"))
+		var sts appsv1.StatefulSet
+		Expect(errors.IsNotFound(k8sClient.Get(ctx, key, &sts))).To(BeTrue())
+	})
+
+	It("repairs deleted children through the registered watch", func() {
+		manager, err := ctrl.NewManager(cfg, ctrl.Options{Scheme: k8sClient.Scheme(), Metrics: metricsserver.Options{BindAddress: "0"}, HealthProbeBindAddress: "0"})
+		Expect(err).NotTo(HaveOccurred())
+		reconciler := &SimpleCacheReconciler{Client: manager.GetClient(), Scheme: manager.GetScheme()}
+		Expect(reconciler.SetupWithManager(manager)).To(Succeed())
+		managerCtx, cancelManager := context.WithCancel(context.Background())
+		stopManager = cancelManager
+		managerDone = make(chan error, 1)
+		go func() { managerDone <- manager.Start(managerCtx) }()
+		serviceKey := types.NamespacedName{Name: resourceName + "-api", Namespace: testNamespace}
+		var svc corev1.Service
+		Eventually(func() error { return k8sClient.Get(ctx, serviceKey, &svc) }, 10*time.Second, 50*time.Millisecond).Should(Succeed())
+		previousUID := svc.UID
+		Expect(k8sClient.Delete(ctx, &svc)).To(Succeed())
+		Eventually(func() bool {
+			if err := k8sClient.Get(ctx, serviceKey, &svc); err != nil {
+				return false
 			}
-			Expect(k8sClient.Get(ctx, typeNamespacedName, simplecache)).To(Succeed())
-		})
-
-		AfterEach(func() {
-			// Envtest does not run garbage collection controllers; remove children explicitly.
-			Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, &appsv1.StatefulSet{
-				ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: "default"},
-			}))).To(Succeed())
-			Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, &corev1.Service{
-				ObjectMeta: metav1.ObjectMeta{Name: resourceName + "-svc", Namespace: "default"},
-			}))).To(Succeed())
-			resource := &cachev1.SimpleCache{}
-			err := k8sClient.Get(ctx, typeNamespacedName, resource)
-			Expect(err).NotTo(HaveOccurred())
-
-			By("Cleanup the specific resource instance SimpleCache")
-			Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
-		})
-		It("should successfully reconcile the resource", func() {
-			By("Reconciling the created resource")
-			controllerReconciler := &SimpleCacheReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
-			}
-
-			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: typeNamespacedName,
-			})
-			Expect(err).NotTo(HaveOccurred())
-			var service corev1.Service
-			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: resourceName + "-svc", Namespace: "default"}, &service)).To(Succeed())
-			Expect(service.Spec.ClusterIP).To(Equal(corev1.ClusterIPNone))
-			Expect(service.Spec.Selector).To(Equal(map[string]string{"app": resourceName}))
-			Expect(metav1.IsControlledBy(&service, simplecache)).To(BeTrue())
-
-			var sts appsv1.StatefulSet
-			Expect(k8sClient.Get(ctx, typeNamespacedName, &sts)).To(Succeed())
-			Expect(*sts.Spec.Replicas).To(Equal(int32(3)))
-			Expect(sts.Spec.ServiceName).To(Equal(resourceName + "-svc"))
-			Expect(sts.Spec.Template.Spec.Containers[0].Image).To(Equal("simplecache:envtest"))
-			Expect(metav1.IsControlledBy(&sts, simplecache)).To(BeTrue())
-
-			By("reconciling the same desired state without rewriting resources")
-			version := sts.ResourceVersion
-			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
-			Expect(err).NotTo(HaveOccurred())
-			Expect(k8sClient.Get(ctx, typeNamespacedName, &sts)).To(Succeed())
-			Expect(sts.ResourceVersion).To(Equal(version))
-
-			By("updating the baseline static peer list and image when replicas change")
-			Expect(k8sClient.Get(ctx, typeNamespacedName, simplecache)).To(Succeed())
-			simplecache.Spec.Size = 4
-			simplecache.Spec.Image = "simplecache:envtest-v2"
-			Expect(k8sClient.Update(ctx, simplecache)).To(Succeed())
-			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
-			Expect(err).NotTo(HaveOccurred())
-			Expect(k8sClient.Get(ctx, typeNamespacedName, &sts)).To(Succeed())
-			Expect(*sts.Spec.Replicas).To(Equal(int32(4)))
-			Expect(sts.Spec.Template.Spec.Containers[0].Image).To(Equal("simplecache:envtest-v2"))
-			var peers string
-			for _, env := range sts.Spec.Template.Spec.Containers[0].Env {
-				if env.Name == "PEERS" {
-					peers = env.Value
-				}
-			}
-			Expect(strings.Split(peers, ",")).To(HaveLen(4))
-			Expect(peers).To(ContainSubstring(resourceName + "-3."))
-		})
-
-		It("should ignore a missing primary resource", func() {
-			reconciler := &SimpleCacheReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
-			_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: "missing-cache", Namespace: "default"}})
-			Expect(err).NotTo(HaveOccurred())
-			var sts appsv1.StatefulSet
-			Expect(errors.IsNotFound(k8sClient.Get(ctx, types.NamespacedName{Name: "missing-cache", Namespace: "default"}, &sts))).To(BeTrue())
-		})
+			return svc.UID != previousUID && metav1.IsControlledBy(&svc, cr)
+		}, 10*time.Second, 50*time.Millisecond).Should(BeTrue())
 	})
 })

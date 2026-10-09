@@ -17,47 +17,35 @@ limitations under the License.
 package v1
 
 import (
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
-// NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
-
-// SimpleCacheSpec defines the desired state of SimpleCache
+// SimpleCacheSpec describes the desired read-cache cluster.
 type SimpleCacheSpec struct {
-	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-	// The following markers will use OpenAPI v3 schema to validate the value
-	// More info: https://book.kubebuilder.io/reference/markers/crd-validation.html
-
-	// foo is an example field of SimpleCache. Edit simplecache_types.go to remove/update
-	// +optional
-	Foo *string `json:"foo,omitempty"`
-
-	// Size is the desired number of cache nodes.
+	// +kubebuilder:default=3
 	// +kubebuilder:validation:Minimum=1
-	Size int32 `json:"size"`
-	// Image is the cache container image, for example x1kun/geecache:v1.
+	// +kubebuilder:validation:Maximum=10
+	// +optional
+	Size int32 `json:"size,omitempty"`
+	// +kubebuilder:validation:MinLength=1
 	Image string `json:"image"`
+	// +kubebuilder:default=67108864
+	// +kubebuilder:validation:Minimum=1048576
+	// +kubebuilder:validation:Maximum=134217728
+	// +optional
+	CacheBytes int64 `json:"cacheBytes,omitempty"`
+	// +kubebuilder:default=60
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=3600
+	// +optional
+	TTLSeconds int32 `json:"ttlSeconds,omitempty"`
+	// +optional
+	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
 }
-
-// SimpleCacheStatus defines the observed state of SimpleCache.
 type SimpleCacheStatus struct {
-	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-
-	// For Kubernetes API conventions, see:
-	// https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/api-conventions.md#typical-status-properties
-
-	// conditions represent the current state of the SimpleCache resource.
-	// Each condition has a unique type and reflects the status of a specific aspect of the resource.
-	//
-	// Standard condition types include:
-	// - "Available": the resource is fully functional
-	// - "Progressing": the resource is being created or updated
-	// - "Degraded": the resource failed to reach or maintain its desired state
-	//
-	// The status of each condition is one of True, False, or Unknown.
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+	ReadyReplicas      int32 `json:"readyReplicas,omitempty"`
 	// +listType=map
 	// +listMapKey=type
 	// +optional
@@ -66,33 +54,20 @@ type SimpleCacheStatus struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
-
-// SimpleCache is the Schema for the simplecaches API
+// +kubebuilder:printcolumn:name="Desired",type=integer,JSONPath=".spec.size"
+// +kubebuilder:printcolumn:name="Ready",type=integer,JSONPath=".status.readyReplicas"
 type SimpleCache struct {
-	metav1.TypeMeta `json:",inline"`
-
-	// metadata is a standard object metadata
-	// +optional
-	metav1.ObjectMeta `json:"metadata,omitzero"`
-
-	// spec defines the desired state of SimpleCache
-	// +required
-	Spec SimpleCacheSpec `json:"spec"`
-
-	// status defines the observed state of SimpleCache
-	// +optional
-	Status SimpleCacheStatus `json:"status,omitzero"`
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
+	Spec              SimpleCacheSpec   `json:"spec"`
+	Status            SimpleCacheStatus `json:"status,omitempty"`
 }
 
 // +kubebuilder:object:root=true
-
-// SimpleCacheList contains a list of SimpleCache
 type SimpleCacheList struct {
 	metav1.TypeMeta `json:",inline"`
-	metav1.ListMeta `json:"metadata,omitzero"`
+	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []SimpleCache `json:"items"`
 }
 
-func init() {
-	SchemeBuilder.Register(&SimpleCache{}, &SimpleCacheList{})
-}
+func init() { SchemeBuilder.Register(&SimpleCache{}, &SimpleCacheList{}) }

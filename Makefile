@@ -1,4 +1,5 @@
 .PHONY: test race build vet check test-operator fmt-check test-ci test-operator-ci compose-config generated-check k8s-render
+.PHONY: kind-up kind-smoke kind-delete
 
 # Prevent Go from invoking Git for automatic version stamping.
 export GOFLAGS := $(GOFLAGS) -buildvcs=false
@@ -36,5 +37,15 @@ k8s-render:
 	$(MAKE) -C simplecache-operator kustomize
 	simplecache-operator/bin/kustomize build simplecache-operator/config/default >/dev/null
 	simplecache-operator/bin/kustomize build simplecache-operator/config/samples >/dev/null
+	simplecache-operator/bin/kustomize build deploy/kind/operator >/dev/null
 # Version-control operations belong to the user.
 check: fmt-check test race build vet
+
+kind-up:
+	bash scripts/kind/up.sh
+
+kind-smoke:
+	bash scripts/kind/smoke.sh
+
+kind-delete:
+	bash scripts/kind/delete.sh

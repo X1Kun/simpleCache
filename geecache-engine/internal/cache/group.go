@@ -88,6 +88,9 @@ func NewGroup(name string, capacity int64, getter Getter, opts Options) *Group {
 }
 func (g *Group) Name() string { return g.name }
 
+// Stats returns a synchronized snapshot of logical cache storage.
+func (g *Group) Stats() Stats { return g.mainCache.stats() }
+
 func (g *Group) observe(operation, result string, elapsed time.Duration) {
 	if g.opts.Observer != nil {
 		g.opts.Observer.Observe(operation, result, elapsed)

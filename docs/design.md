@@ -1,6 +1,6 @@
 # SimpleCache design
 
-Current state: reliable reads, static/EndpointSlice membership, atomic snapshots, and the Operator discovery/resource contract are implemented. API-server/race tests validate the controller; real Kind integration remains unverified. See [the plan](plan.md) and [README](../README.md).
+Current state: reliable reads, static/EndpointSlice membership, atomic snapshots, and the Operator discovery/resource contract are implemented. API-server/race tests validate the controller; the original Kind integration smoke passed locally. Expanded scenarios generate independent run evidence. See [the plan](plan.md) and [README](../README.md).
 
 ## Responsibilities
 
@@ -83,7 +83,7 @@ New StatefulSets use Parallel management; existing compatible immutable policy/i
 
 The demo source is read-only and identical across nodes, with 100ms simulated latency. There is no write API, replication, persistence, active migration, or strong consistency. SingleFlight and source limits are process-local. Membership converges eventually.
 
-Unit/race tests and fake discovery prove local contracts. Envtest additionally checks real API defaulting, allocated-field preservation, Status, conflicts, scaling without template changes, and Manager child-watch repair. It does not prove deployed permissions or Pod networking. Dedicated Kind scripts are prepared; their live run, monitoring, resource experiments, and Profiling remain pending.
+Unit/race tests and fake discovery validate local contracts. Envtest additionally checks real API defaulting, allocated-field preservation, Status, conflicts, scaling without template changes, and Manager child-watch repair. It does not prove deployed permissions or Pod networking. The original dedicated Kind smoke passed locally. Expanded Kind tests require error-free reads during scaling/Pod replacement and recovery from infeasible resource requests; each run reports actual outcomes. Local diagnostics measure logical capacity, hash movement, source limits and latency, with test-process profiles rather than a publicly exposed admin endpoint. Grafana provisioning and deployed-process profiling remain separate follow-up work.
 
 No throughput, GPU, scheduler-plugin, or production-availability claim follows from these tests. Keep advanced scheduling and AI workloads as separate follow-up work.
 

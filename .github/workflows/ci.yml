@@ -40,8 +40,8 @@ jobs:
       - name: Run static analysis
         run: make vet
 
-      - name: Run engine tests with race detector
-        run: make test-ci
+      - name: Run engine race tests and diagnostic reports
+        run: make validate
 
       - name: Compile engine and Operator
         run: make build
@@ -54,12 +54,12 @@ jobs:
           make generated-check
           make k8s-render
 
-      - name: Upload engine coverage
+      - name: Upload engine reports, profiles and coverage
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: engine-coverage
-          path: geecache-engine/cover.out
+          name: engine-validation
+          path: bin/reports/
           if-no-files-found: ignore
 
   operator-tests:
@@ -81,10 +81,10 @@ jobs:
       - name: Run Operator API-server tests
         run: make test-operator-ci
 
-      - name: Upload Operator coverage
+      - name: Upload Operator report and coverage
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: operator-coverage
-          path: simplecache-operator/cover.out
+          name: operator-validation
+          path: bin/reports/
           if-no-files-found: ignore

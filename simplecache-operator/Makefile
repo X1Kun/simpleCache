@@ -62,8 +62,10 @@ test: manifests generate fmt vet setup-envtest ## Run tests.
 	KUBEBUILDER_ASSETS="$(shell "$(ENVTEST)" use $(ENVTEST_K8S_VERSION) --bin-dir "$(LOCALBIN)" -p path)" go test $$(go list ./... | grep -v /e2e) -coverprofile cover.out
 
 .PHONY: test-ci
+# Optional absolute destination supplied by the root per-run report wrapper.
+GINKGO_JSON_REPORT ?=
 test-ci: manifests generate fmt vet setup-envtest ## Run uncached controller tests with the race detector.
-	KUBEBUILDER_ASSETS="$(shell "$(ENVTEST)" use $(ENVTEST_K8S_VERSION) --bin-dir "$(LOCALBIN)" -p path)" go test -race -count=1 -timeout=3m -coverprofile=cover.out ./internal/controller/...
+	KUBEBUILDER_ASSETS="$(shell "$(ENVTEST)" use $(ENVTEST_K8S_VERSION) --bin-dir "$(LOCALBIN)" -p path)" go test -race -count=1 -timeout=3m -coverprofile=cover.out ./internal/controller/... $(if $(GINKGO_JSON_REPORT),-args -ginkgo.json-report="$(GINKGO_JSON_REPORT)")
 
 # TODO(user): To use a different vendor for e2e tests, modify the setup under 'tests/e2e'.
 # The default setup assumes Kind is pre-installed and builds/loads the Manager Docker image locally.
